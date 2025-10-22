@@ -7,6 +7,7 @@ from collections.abc import Iterable, Sequence
 from typing import Literal
 
 from openai.types.responses import (
+    ResponseCodeInterpreterToolCallParam,
     ResponseFunctionToolCall,
     ResponseOutputItem,
     ResponseOutputMessage,
@@ -328,7 +329,7 @@ def render_for_completion(messages: list[Message]) -> list[int]:
     return token_ids
 
 
-def parse_output_message(message: Message) -> list[ResponseOutputItem]:
+def parse_output_message(message: Message, message_index: int = -1, tool_outputs: dict[str, str] | None = None) -> list[ResponseOutputItem]:
     """
     Parse a Harmony message into a list of output response items.
     """
@@ -379,11 +380,18 @@ def parse_output_message(message: Message) -> list[ResponseOutputItem]:
             )
         else:
             raise ValueError(f"Unknown browser action: {recipient}")
+
+        # Get tool output if available
+        result = None
+        if tool_outputs and str(message_index) in tool_outputs:
+            result = tool_outputs[str(message_index)]
+
         web_search_item = ResponseFunctionWebSearch(
             id=f"ws_{random_uuid()}",
             action=action,
             status="completed",
             type="web_search_call",
+            result=result,  # Include the search results
         )
         output_items.append(web_search_item)
     elif message.channel == "analysis":
@@ -413,9 +421,25 @@ def parse_output_message(message: Message) -> list[ResponseOutputItem]:
                     id=f"fc_{random_id}",
                 )
                 output_items.append(response_item)
+        elif recipient is not None and recipient.startswith("python"):
+            # Code interpreter call
+            for content in message.content:
+                # Get tool output if available
+                outputs = []
+                if tool_outputs and str(message_index) in tool_outputs:
+                    outputs = [{"type": "logs", "logs": tool_outputs[str(message_index)]}]
+
+                code_interpreter_item = ResponseCodeInterpreterToolCallParam(
+                    id=f"tool_{random_uuid()}",
+                    code=content.text,
+                    container_id="auto",
+                    outputs=outputs,
+                    status="completed",
+                    type="code_interpreter_call",
+                )
+                output_items.append(code_interpreter_item)
         elif recipient is not None and (
-            recipient.startswith("python")
-            or recipient.startswith("browser")
+            recipient.startswith("browser")
             or recipient.startswith("container")
         ):
             for content in message.content:

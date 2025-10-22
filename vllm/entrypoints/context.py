@@ -184,6 +184,7 @@ class HarmonyContext(ConversationContext):
         self.available_tools = available_tools
         self._tool_sessions: dict[str, ClientSession | Tool] = {}
         self.called_tools: set[str] = set()
+        self._tool_outputs: dict[str, str] = {}  # Maps tool call message index to output text
 
         self.parser = get_streamable_parser_for_assistant()
         self.num_init_messages = len(messages)
@@ -227,6 +228,17 @@ class HarmonyContext(ConversationContext):
         else:
             # Tool output.
             output_msgs = output
+            # Track tool outputs for non-streaming responses
+            for msg in output_msgs:
+                if msg.author.role == Role.TOOL:
+                    # Store the output keyed by the tool call message index
+                    # Find the corresponding tool call message
+                    for i in range(len(self._messages) - 1, -1, -1):
+                        tool_msg = self._messages[i]
+                        if (tool_msg.recipient is not None and
+                            tool_msg.recipient == msg.author.name):
+                            self._tool_outputs[str(i)] = msg.content[0].text
+                            break
         self._messages.extend(output_msgs)
 
     def _update_prefill_token_usage(self, output: RequestOutput) -> None:
@@ -497,6 +509,8 @@ class StreamingHarmonyContext(HarmonyContext):
         self.encoding = get_encoding()
         self.last_tok = None
         self.first_tok_of_message = True
+        self._pending_tool_output: Message | None = None
+        self._last_tool_output_text: str | None = None
 
     @property
     def messages(self) -> list:
@@ -540,6 +554,9 @@ class StreamingHarmonyContext(HarmonyContext):
             for tok in toks:
                 self.parser.process(tok)
             self.last_tok = toks[-1]
+            # Track this tool output for streaming and final response
+            self._pending_tool_output = msg
+            self._last_tool_output_text = msg.content[0].text
             # TODO: add tool_output messages to self._messages
 
     def is_expecting_start(self) -> bool:
@@ -547,6 +564,20 @@ class StreamingHarmonyContext(HarmonyContext):
 
     def is_assistant_action_turn(self) -> bool:
         return self.last_tok in self.encoding.stop_tokens_for_assistant_actions()
+
+    def has_pending_tool_output(self) -> bool:
+        """Check if there's a tool output that hasn't been streamed yet."""
+        return self._pending_tool_output is not None
+
+    def get_pending_tool_output(self) -> Message | None:
+        """Get and clear the pending tool output."""
+        output = self._pending_tool_output
+        self._pending_tool_output = None
+        return output
+
+    def get_last_tool_output_text(self) -> str | None:
+        """Get the last tool output text without clearing it."""
+        return self._last_tool_output_text
 
     def render_for_completion(self) -> list[int]:
         # now this list of tokens as next turn's starting tokens

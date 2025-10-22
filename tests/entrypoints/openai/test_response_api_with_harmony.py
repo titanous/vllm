@@ -464,6 +464,16 @@ async def test_streaming(client: OpenAI, model_name: str, background: bool):
                 and event.item.type == "web_search_call"
             ):
                 print(f"Web search: {event.item.action}", end="", flush=True)
+            elif (
+                "response.output_item.done" in event.type
+                and event.item.type == "code_interpreter_call"
+            ):
+                # Verify outputs are populated
+                assert event.item.outputs is not None
+                assert len(event.item.outputs) > 0
+                assert event.item.outputs[0]["type"] == "logs"
+                assert len(event.item.outputs[0]["logs"]) > 0
+                print(f"Code output: {event.item.outputs[0]['logs'][:50]}...", end="", flush=True)
             events.append(event)
 
         assert len(events) > 0
@@ -495,6 +505,18 @@ async def test_web_search(client: OpenAI, model_name: str):
     assert response is not None
     assert response.status == "completed"
 
+    # Verify web search results are present
+    found_web_search = False
+    for item in response.output:
+        if item.type == "web_search_call":
+            found_web_search = True
+            # Check that result is populated
+            assert item.result is not None
+            assert len(item.result) > 0
+            print("web_search result: ", item.result[:200], flush=True)
+
+    assert found_web_search, "Expected to find web_search_call in output"
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("model_name", [MODEL_NAME])
@@ -516,11 +538,24 @@ async def test_code_interpreter(client: OpenAI, model_name: str):
     assert response is not None
     assert response.status == "completed"
     assert response.usage.output_tokens_details.tool_output_tokens > 0
+
+    # Verify tool outputs are present
+    found_code_interpreter = False
     for item in response.output:
-        if item.type == "message":
+        if item.type == "code_interpreter_call":
+            found_code_interpreter = True
+            # Check that outputs are populated
+            assert item.outputs is not None
+            assert len(item.outputs) > 0
+            assert item.outputs[0]["type"] == "logs"
+            assert len(item.outputs[0]["logs"]) > 0
+            print("code_interpreter output: ", item.outputs[0]["logs"], flush=True)
+        elif item.type == "message":
             output_string = item.content[0].text
             print("output_string: ", output_string, flush=True)
             assert "5846" in output_string
+
+    assert found_code_interpreter, "Expected to find code_interpreter_call in output"
 
 
 def get_weather(latitude, longitude):

@@ -848,8 +848,8 @@ class OpenAIServingResponses(OpenAIServing):
     ) -> list[ResponseOutputItem]:
         output_items: list[ResponseOutputItem] = []
         num_init_messages = context.num_init_messages
-        for msg in context.messages[num_init_messages:]:
-            output_items.extend(parse_output_message(msg))
+        for i, msg in enumerate(context.messages[num_init_messages:], start=num_init_messages):
+            output_items.extend(parse_output_message(msg, message_index=i, tool_outputs=context._tool_outputs))
         # Handle the generation stopped in the middle (if any).
         last_items = parse_remaining_state(context.parser)
         if last_items:
@@ -1479,8 +1479,59 @@ class OpenAIServingResponses(OpenAIServing):
         current_item_id: str = ""
         sent_output_item_added = False
         is_first_function_call_delta = False
+        last_code_interpreter_item_id: str | None = None
+        pending_code_interpreter_code: str | None = None
+        last_web_search_item_id: str | None = None
+        pending_web_search_action = None
         async for ctx in result_generator:
             assert isinstance(ctx, StreamingHarmonyContext)
+
+            # Check for tool output from the previous iteration and emit the done event
+            if ctx.has_pending_tool_output():
+                tool_output_msg = ctx.get_pending_tool_output()
+
+                # Handle code interpreter tool output
+                if tool_output_msg is not None and tool_output_msg.author.name == "python" and last_code_interpreter_item_id is not None:
+                    # Emit the output_item.done event with the outputs now that we have them
+                    outputs = [{"type": "logs", "logs": tool_output_msg.content[0].text}]
+                    yield _increment_sequence_number_and_return(
+                        ResponseOutputItemDoneEvent(
+                            type="response.output_item.done",
+                            sequence_number=-1,
+                            output_index=current_output_index,
+                            item=ResponseCodeInterpreterToolCallParam(
+                                type="code_interpreter_call",
+                                id=last_code_interpreter_item_id,
+                                code=pending_code_interpreter_code or "",
+                                container_id="auto",
+                                outputs=outputs,
+                                status="completed",
+                            ),
+                        )
+                    )
+                    last_code_interpreter_item_id = None
+                    pending_code_interpreter_code = None
+
+                # Handle browser tool output
+                elif tool_output_msg is not None and tool_output_msg.author.name and tool_output_msg.author.name.startswith("browser.") and last_web_search_item_id is not None:
+                    # Browser search is complete - emit the done event with results
+                    search_results = tool_output_msg.content[0].text
+                    yield _increment_sequence_number_and_return(
+                        ResponseOutputItemDoneEvent(
+                            type="response.output_item.done",
+                            sequence_number=-1,
+                            output_index=current_output_index,
+                            item=ResponseFunctionWebSearch(
+                                type="web_search_call",
+                                id=last_web_search_item_id,
+                                action=pending_web_search_action,
+                                status="completed",
+                                result=search_results,  # Full search results
+                            ),
+                        )
+                    )
+                    last_web_search_item_id = None
+                    pending_web_search_action = None
 
             if ctx.is_expecting_start():
                 current_output_index += 1
@@ -1717,7 +1768,7 @@ class OpenAIServingResponses(OpenAIServing):
                                     id=current_item_id,
                                     code=None,
                                     container_id="auto",
-                                    outputs=None,
+                                    outputs=None,  # Will be populated when done
                                     status="in_progress",
                                 ),
                             )
@@ -1805,7 +1856,6 @@ class OpenAIServingResponses(OpenAIServing):
                         )
                     )
 
-                    # enqueue
                     yield _increment_sequence_number_and_return(
                         ResponseWebSearchCallCompletedEvent(
                             type="response.web_search_call.completed",
@@ -1814,19 +1864,9 @@ class OpenAIServingResponses(OpenAIServing):
                             item_id=current_item_id,
                         )
                     )
-                    yield _increment_sequence_number_and_return(
-                        ResponseOutputItemDoneEvent(
-                            type="response.output_item.done",
-                            sequence_number=-1,
-                            output_index=current_output_index,
-                            item=ResponseFunctionWebSearch(
-                                type="web_search_call",
-                                id=current_item_id,
-                                action=action,
-                                status="completed",
-                            ),
-                        )
-                    )
+                    # Save the item_id and action to emit output_item.done later with results
+                    last_web_search_item_id = current_item_id
+                    pending_web_search_action = action
 
                 if (
                     self.tool_server is not None
@@ -1859,22 +1899,9 @@ class OpenAIServingResponses(OpenAIServing):
                             item_id=current_item_id,
                         )
                     )
-                    yield _increment_sequence_number_and_return(
-                        ResponseOutputItemDoneEvent(
-                            type="response.output_item.done",
-                            sequence_number=-1,
-                            output_index=current_output_index,
-                            item=ResponseCodeInterpreterToolCallParam(
-                                type="code_interpreter_call",
-                                id=current_item_id,
-                                code=previous_item.content[0].text,
-                                container_id="auto",
-                                # TODO: add outputs here
-                                outputs=[],
-                                status="completed",
-                            ),
-                        )
-                    )
+                    # Save the item_id and code to emit output_item.done later with outputs
+                    last_code_interpreter_item_id = current_item_id
+                    pending_code_interpreter_code = previous_item.content[0].text
             # developer tools will be triggered on the commentary channel
             # and recipient starts with "functions.TOOL_NAME"
             if (
