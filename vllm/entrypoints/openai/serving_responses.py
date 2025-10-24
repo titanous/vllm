@@ -1806,7 +1806,7 @@ class OpenAIServingResponses(OpenAIServing):
                     if function_name == "search":
                         action = response_function_web_search.ActionSearch(
                             type="search",
-                            query=parsed_args["query"],
+                            query=parsed_args.get("query", ""),
                         )
                     elif function_name == "open":
                         action = response_function_web_search.ActionOpenPage(
@@ -1817,7 +1817,7 @@ class OpenAIServingResponses(OpenAIServing):
                     elif function_name == "find":
                         action = response_function_web_search.ActionFind(
                             type="find",
-                            pattern=parsed_args["pattern"],
+                            pattern=parsed_args.get("pattern", ""),
                             # TODO: translate to url
                             url=f"cursor:{parsed_args.get('cursor', '')}",
                         )
