@@ -1625,7 +1625,7 @@ class EngineArgs:
         # Forward the deprecated CLI args to the StructuredOutputsConfig
         so_config = self.structured_outputs_config
         if self.guided_decoding_backend is not None:
-            so_config.guided_decoding_backend = self.guided_decoding_backend
+            so_config.backend = self.guided_decoding_backend
         if self.guided_decoding_disable_fallback is not None:
             so_config.disable_fallback = self.guided_decoding_disable_fallback
         if self.guided_decoding_disable_any_whitespace is not None:
