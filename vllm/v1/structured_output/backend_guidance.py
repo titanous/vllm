@@ -219,26 +219,70 @@ def serialize_guidance_grammar(
                 s_tag = json.loads(grammar_spec)
             else:
                 s_tag = grammar_spec
-            triggers: list[str] = s_tag["triggers"]
-            tags: list[llguidance.StructTag] = []
-            for s in s_tag["structures"]:
-                begin: str = s["begin"]
-                trig = next((t for t in triggers if begin.startswith(t)), None)
-                if trig is None:
-                    raise ValueError(
-                        f"Trigger {begin} not found in triggers {triggers}"
+
+            # Handle both old and new structural tag formats
+            if "structures" in s_tag:
+                # Old/legacy format: triggers and structures at top level
+                triggers: list[str] = s_tag["triggers"]
+                tags: list[llguidance.StructTag] = []
+                for s in s_tag["structures"]:
+                    begin: str = s["begin"]
+                    trig = next((t for t in triggers if begin.startswith(t)), None)
+                    if trig is None:
+                        raise ValueError(
+                            f"Trigger {begin} not found in triggers {triggers}"
+                        )
+                    tags.append(
+                        llguidance.StructTag(
+                            trigger=trig,
+                            begin=s["begin"],
+                            grammar=_process_schema(s["schema"]),
+                            end=s["end"],
+                        )
                     )
-                tags.append(
-                    llguidance.StructTag(
-                        trigger=trig,
-                        begin=s["begin"],
-                        grammar=_process_schema(s["schema"]),
-                        end=s["end"],
+                if not tags:
+                    raise ValueError("No structural tags found in the grammar spec.")
+                return llguidance.StructTag.to_grammar(tags)
+            else:
+                # New format: triggers and tags nested in "format" field
+                format_spec = s_tag.get("format", {})
+                triggers: list[str] = format_spec["triggers"]
+                tags: list[llguidance.StructTag] = []
+                for s in format_spec["tags"]:
+                    begin: str = s["begin"]
+                    trig = next((t for t in triggers if begin.startswith(t)), None)
+                    if trig is None:
+                        raise ValueError(
+                            f"Trigger {begin} not found in triggers {triggers}"
+                        )
+                    # New format uses "content" instead of "schema"
+                    content_spec = s.get("content", s.get("schema"))
+                    if content_spec:
+                        # Check if this is a special "any_text" type
+                        if isinstance(content_spec, dict) and content_spec.get("type") == "any_text":
+                            # For any_text, match any characters except the end marker
+                            # Use a permissive regex pattern
+                            end_marker = s["end"]
+                            # Create a pattern that matches anything that doesn't start with the end marker
+                            # We use a simple approach: match any string
+                            grammar = llguidance.grammar_from("regex", r"[\s\S]*")
+                        else:
+                            # Otherwise treat it as a JSON schema
+                            grammar = _process_schema(content_spec)
+                    else:
+                        # If no schema/content specified, use any text
+                        grammar = llguidance.grammar_from("regex", r"[\s\S]*")
+                    tags.append(
+                        llguidance.StructTag(
+                            trigger=trig,
+                            begin=s["begin"],
+                            grammar=grammar,
+                            end=s["end"],
+                        )
                     )
-                )
-            if not tags:
-                raise ValueError("No structural tags found in the grammar spec.")
-            return llguidance.StructTag.to_grammar(tags)
+                if not tags:
+                    raise ValueError("No structural tags found in the grammar spec.")
+                return llguidance.StructTag.to_grammar(tags)
         else:
             logger.error(
                 "Validation should have already occurred. Please file an issue."
