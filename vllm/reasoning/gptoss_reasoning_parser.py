@@ -31,26 +31,60 @@ no_func_reaonsing_tag = {
 
 
 def from_builtin_tool_to_tag(tool: str) -> list[dict]:
-    tag = [
-        {
-            "begin": f"<|channel|>commentary to={tool}",
-            "content": {"type": "any_text"},
-            "end": "<|end|>",
-        },
-        {
-            "begin": f"<|channel|>analysis to={tool}",
-            "content": {"type": "any_text"},
-            "end": "<|end|>",
-        },
-    ]
-    return tag
+    """Generate structural tags for a builtin tool with proper JSON schemas.
+
+    Args:
+        tool: Tool name (e.g., "browser", "python", "container")
+
+    Returns:
+        List of tag dictionaries with correct Harmony format patterns and schemas
+    """
+    from openai_harmony import ToolNamespaceConfig
+
+    # Get tool configuration with schemas
+    if tool == "browser":
+        config = ToolNamespaceConfig.browser()
+    elif tool == "python":
+        config = ToolNamespaceConfig.python()
+    elif tool == "container":
+        config = ToolNamespaceConfig.container()
+    else:
+        config = None
+
+    tags = []
+    channels = ["commentary", "analysis"]  # Support both channels for tool calls
+
+    if config and config.tools:
+        # For each function in the tool namespace, create tags with JSON schemas
+        for func in config.tools:
+            for channel in channels:
+                tags.append({
+                    "begin": f"<|start|>assistant to={tool}.{func.name}<|channel|>{channel}<|message|>",
+                    "content": {
+                        "type": "json_schema",
+                        "json_schema": func.parameters
+                    },
+                    "end": "<|call|>"
+                })
+    else:
+        # Python or tools without function schemas - accept any text
+        for channel in channels:
+            tags.append({
+                "begin": f"<|start|>assistant to={tool}<|channel|>{channel}<|message|>",
+                "content": {"type": "any_text"},
+                "end": "<|call|>"
+            })
+
+    return tags
 
 
 def tag_with_builtin_funcs(no_func_reaonsing_tag, builtin_tool_list: list[str]) -> dict:
     import copy
 
     new_tag = copy.deepcopy(no_func_reaonsing_tag)
-    new_tag["format"]["triggers"].append("<|channel|>commentary to=")
+    # Add trigger for tool calls - matches the actual Harmony format
+    # where "to={tool}" appears BEFORE "<|channel|>"
+    new_tag["format"]["triggers"].append("<|start|>assistant to=")
 
     for tool in builtin_tool_list:
         new_tag["format"]["tags"].extend(from_builtin_tool_to_tag(tool))

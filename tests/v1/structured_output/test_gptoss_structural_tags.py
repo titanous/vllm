@@ -79,14 +79,21 @@ class TestGptOssReasoningParser:
         )
         parsed = json.loads(result)
 
-        # Should have analysis tag + tags for all 3 tools (2 tags each)
-        assert len(parsed["format"]["tags"]) == 7  # 1 analysis + 6 tool tags
+        # Browser has 3 functions × 2 channels = 6 tags
+        # Python has no functions × 2 channels = 2 tags
+        # Container has no functions × 2 channels = 2 tags
+        # Plus 1 analysis tag = 11 total
+        assert len(parsed["format"]["tags"]) == 11
 
-        # Check all tool tags are present
+        # Check that tool-specific tags use correct Harmony format
         tag_begins = [tag["begin"] for tag in parsed["format"]["tags"]]
-        for tool in ["browser", "python", "container"]:
-            assert f"<|channel|>commentary to={tool}" in tag_begins
-            assert f"<|channel|>analysis to={tool}" in tag_begins
+        # Browser should have function-specific tags (browser.search, browser.open, browser.find)
+        assert any("to=browser.search" in begin for begin in tag_begins)
+        assert any("to=browser.open" in begin for begin in tag_begins)
+        assert any("to=browser.find" in begin for begin in tag_begins)
+        # Python and container should have generic tags
+        assert any("to=python<|channel|>" in begin for begin in tag_begins)
+        assert any("to=container<|channel|>" in begin for begin in tag_begins)
 
     def test_prepare_structured_tag_with_original_tag(self, reasoning_parser):
         """Test prepare_structured_tag when original_tag is provided."""
@@ -98,16 +105,27 @@ class TestGptOssReasoningParser:
 
     def test_from_builtin_tool_to_tag(self):
         """Test from_builtin_tool_to_tag function."""
-        tags = from_builtin_tool_to_tag("python")
+        # Python has no functions, so it should have 2 generic tags (commentary + analysis)
+        python_tags = from_builtin_tool_to_tag("python")
+        assert len(python_tags) == 2
+        assert python_tags[0]["begin"] == "<|start|>assistant to=python<|channel|>commentary<|message|>"
+        assert python_tags[0]["content"]["type"] == "any_text"
+        assert python_tags[0]["end"] == "<|call|>"
+        assert python_tags[1]["begin"] == "<|start|>assistant to=python<|channel|>analysis<|message|>"
+        assert python_tags[1]["end"] == "<|call|>"
 
-        assert len(tags) == 2
-        assert tags[0]["begin"] == "<|channel|>commentary to=python"
-        assert tags[0]["content"]["type"] == "any_text"
-        assert tags[0]["end"] == "<|end|>"
-
-        assert tags[1]["begin"] == "<|channel|>analysis to=python"
-        assert tags[1]["content"]["type"] == "any_text"
-        assert tags[1]["end"] == "<|end|>"
+        # Browser has 3 functions, so it should have 6 tags (3 functions × 2 channels)
+        browser_tags = from_builtin_tool_to_tag("browser")
+        assert len(browser_tags) == 6
+        # Check that browser tags include function names and JSON schemas
+        tag_begins = [tag["begin"] for tag in browser_tags]
+        assert any("to=browser.search" in begin for begin in tag_begins)
+        assert any("to=browser.open" in begin for begin in tag_begins)
+        assert any("to=browser.find" in begin for begin in tag_begins)
+        # Verify schemas are present (not any_text)
+        for tag in browser_tags:
+            assert tag["content"]["type"] == "json_schema"
+            assert "json_schema" in tag["content"]
 
     def test_tag_with_builtin_funcs(self):
         """Test tag_with_builtin_funcs function."""
@@ -115,11 +133,13 @@ class TestGptOssReasoningParser:
         result = tag_with_builtin_funcs(no_func_reaonsing_tag, builtin_tools)
 
         assert result["type"] == "structural_tag"
-        # Should have original analysis tag + 2 tags per tool
-        assert len(result["format"]["tags"]) == 5  # 1 + 2*2
+        # Browser: 3 functions × 2 channels = 6 tags
+        # Python: 0 functions × 2 channels = 2 tags
+        # Plus original analysis tag = 9 total
+        assert len(result["format"]["tags"]) == 9
 
-        # Should have added commentary trigger
-        assert "<|channel|>commentary to=" in result["format"]["triggers"]
+        # Should have added tool call trigger with correct Harmony format
+        assert "<|start|>assistant to=" in result["format"]["triggers"]
         assert "<|channel|>analysis" in result["format"]["triggers"]
 
     def test_tag_structure_invariants(self):
@@ -164,9 +184,17 @@ class TestGptOssReasoningParser:
         result = reasoning_parser.prepare_structured_tag(None, tool_server)
         parsed = json.loads(result)
 
-        # Should have 1 analysis + 2 tool-specific tags
-        assert len(parsed["format"]["tags"]) == 3
-
         tag_begins = [tag["begin"] for tag in parsed["format"]["tags"]]
-        assert f"<|channel|>commentary to={tool_name}" in tag_begins
-        assert f"<|channel|>analysis to={tool_name}" in tag_begins
+
+        if tool_name == "browser":
+            # Browser has 3 functions × 2 channels + 1 analysis = 7 tags
+            assert len(parsed["format"]["tags"]) == 7
+            # Check for function-specific tags
+            assert any("to=browser.search" in begin for begin in tag_begins)
+            assert any("to=browser.open" in begin for begin in tag_begins)
+            assert any("to=browser.find" in begin for begin in tag_begins)
+        else:
+            # Python/container: 2 tags (commentary + analysis) + 1 analysis = 3 tags
+            assert len(parsed["format"]["tags"]) == 3
+            assert any(f"to={tool_name}<|channel|>commentary" in begin for begin in tag_begins)
+            assert any(f"to={tool_name}<|channel|>analysis" in begin for begin in tag_begins)

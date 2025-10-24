@@ -72,23 +72,20 @@ class TestGptOssStructuralTagsIntegration:
         result = gptoss_parser.prepare_structured_tag(None, tool_server_with_python)
         parsed_result = json.loads(result)
 
-        # Should have analysis tag + 2 python tags
+        # Python: 2 tags (commentary + analysis) + 1 analysis = 3 tags
         assert len(parsed_result["format"]["tags"]) == 3
 
-        # Verify all expected tags are present
+        # Verify all expected tags use correct Harmony format
         tag_begins = [tag["begin"] for tag in parsed_result["format"]["tags"]]
-        expected_begins = [
-            "<|channel|>analysis<|message|>",
-            "<|channel|>commentary to=python",
-            "<|channel|>analysis to=python",
-        ]
+        # Analysis tag
+        assert "<|channel|>analysis<|message|>" in tag_begins
+        # Python tool tags with correct format
+        assert any("to=python<|channel|>commentary<|message|>" in begin for begin in tag_begins)
+        assert any("to=python<|channel|>analysis<|message|>" in begin for begin in tag_begins)
 
-        for expected in expected_begins:
-            assert expected in tag_begins
-
-        # Verify triggers include commentary
+        # Verify triggers use correct format
         assert "<|channel|>analysis" in parsed_result["format"]["triggers"]
-        assert "<|channel|>commentary to=" in parsed_result["format"]["triggers"]
+        assert "<|start|>assistant to=" in parsed_result["format"]["triggers"]
 
     def test_structured_outputs_params_integration(
         self, gptoss_parser, tool_server_with_python
@@ -114,12 +111,12 @@ class TestGptOssStructuralTagsIntegration:
         [
             # No tools
             (False, False, False, 1),
-            # Single tool
-            (True, False, False, 3),
-            # Multiple tools
-            (True, True, False, 5),
-            # All tools
-            (True, True, True, 7),
+            # Browser only: 3 functions × 2 channels + 1 analysis = 7
+            (True, False, False, 7),
+            # Browser + Python: 6 + 2 + 1 analysis = 9
+            (True, True, False, 9),
+            # All tools: 6 (browser) + 2 (python) + 2 (container) + 1 (analysis) = 11
+            (True, True, True, 11),
         ],
     )
     def test_tool_server_interaction_flow(
@@ -146,16 +143,17 @@ class TestGptOssStructuralTagsIntegration:
         # Validate number of tags
         assert len(parsed_result["format"]["tags"]) == expected_tags
 
-        # Verify tool-specific tags exist for enabled tools
+        # Verify tool-specific tags use correct Harmony format
         tag_begins = [tag["begin"] for tag in parsed_result["format"]["tags"]]
-        for tool, enabled in {
-            "browser": browser,
-            "python": python,
-            "container": container,
-        }.items():
-            if enabled:
-                assert f"<|channel|>commentary to={tool}" in tag_begins
-                assert f"<|channel|>analysis to={tool}" in tag_begins
+        if browser:
+            # Browser should have function-specific tags
+            assert any("to=browser.search" in begin for begin in tag_begins)
+            assert any("to=browser.open" in begin for begin in tag_begins)
+            assert any("to=browser.find" in begin for begin in tag_begins)
+        if python:
+            assert any("to=python<|channel|>" in begin for begin in tag_begins)
+        if container:
+            assert any("to=container<|channel|>" in begin for begin in tag_begins)
 
     def test_original_tag_preservation(self, gptoss_parser, tool_server_with_python):
         """Test that original tags are preserved when provided."""
@@ -198,8 +196,16 @@ class TestGptOssStructuralTagsIntegration:
         assert "tags" in parsed_result["format"]
         assert "triggers" in parsed_result["format"]
 
-        # Tag count should be: 1 (analysis) + 2 * len(tools)
-        expected_tag_count = 1 + (2 * len(tools))
+        # Calculate expected tag count:
+        # - 1 analysis tag (always)
+        # - browser: 3 functions × 2 channels = 6 tags
+        # - python/container: 2 channels each = 2 tags each
+        expected_tag_count = 1
+        for tool in tools:
+            if tool == "browser":
+                expected_tag_count += 6
+            else:
+                expected_tag_count += 2
         assert len(parsed_result["format"]["tags"]) == expected_tag_count
 
     def test_error_handling_invalid_tool_server(self, gptoss_parser):
@@ -234,12 +240,12 @@ class TestGptOssStructuralTagsIntegration:
         tags_2 = [tag["begin"] for tag in parsed_2["format"]["tags"]]
 
         # Result 1 should have python tags
-        assert "<|channel|>commentary to=python" in tags_1
-        assert "<|channel|>commentary to=browser" not in tags_1
+        assert any("to=python<|channel|>" in tag for tag in tags_1)
+        assert not any("to=browser" in tag for tag in tags_1)
 
         # Result 2 should have browser tags
-        assert "<|channel|>commentary to=browser" in tags_2
-        assert "<|channel|>commentary to=python" not in tags_2
+        assert any("to=browser" in tag for tag in tags_2)
+        assert not any("to=python" in tag for tag in tags_2)
 
     def test_tag_format_consistency(self, gptoss_parser):
         """Test that all generated tags follow consistent format."""
@@ -256,11 +262,19 @@ class TestGptOssStructuralTagsIntegration:
             assert "begin" in tag
             assert "content" in tag
             assert "end" in tag
-            assert tag["content"]["type"] == "any_text"
-            assert tag["end"] == "<|end|>"
+            # Content type can be "any_text" or "json_schema"
+            assert tag["content"]["type"] in ["any_text", "json_schema"]
+
+            # End marker depends on whether it's a tool call or not
+            if "to=" in tag["begin"]:
+                # Tool calls end with <|call|>
+                assert tag["end"] == "<|call|>"
+            else:
+                # Analysis channel ends with <|end|>
+                assert tag["end"] == "<|end|>"
 
             # Verify begin format
-            assert tag["begin"].startswith("<|channel|>")
+            assert tag["begin"].startswith("<|channel|>") or tag["begin"].startswith("<|start|>")
 
     def test_trigger_configuration(self, gptoss_parser):
         """Test trigger configuration for different tool setups."""
@@ -276,5 +290,6 @@ class TestGptOssStructuralTagsIntegration:
         result_with_tools = gptoss_parser.prepare_structured_tag(None, tool_server)
         parsed_with_tools = json.loads(result_with_tools)
 
-        expected_triggers = ["<|channel|>analysis", "<|channel|>commentary to="]
+        # With tools, should have both analysis and tool call triggers
+        expected_triggers = ["<|channel|>analysis", "<|start|>assistant to="]
         assert set(parsed_with_tools["format"]["triggers"]) == set(expected_triggers)
