@@ -120,10 +120,18 @@ class ReasoningParser:
         self,
         original_tag: str | None,
         tool_server: ToolServer | None,
+        custom_tools: list | None = None,
     ) -> str:
         """
-        Instance method that is implemented for preparing the structured tag
-        Otherwise, None is returned
+        Instance method that is implemented for preparing the structured tag.
+
+        Args:
+            original_tag: Optional pre-existing structural tag
+            tool_server: Server providing builtin tools (browser, python, container)
+            custom_tools: Optional list of custom function tools
+
+        Returns:
+            Structural tag JSON string, or None if not implemented
         """
         return None
 

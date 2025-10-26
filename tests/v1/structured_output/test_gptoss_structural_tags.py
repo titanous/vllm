@@ -12,6 +12,7 @@ from vllm.entrypoints.tool_server import ToolServer
 from vllm.reasoning.gptoss_reasoning_parser import (
     GptOssReasoningParser,
     from_builtin_tool_to_tag,
+    from_custom_function_to_tag,
     no_func_reaonsing_tag,
     tag_with_builtin_funcs,
 )
@@ -198,3 +199,91 @@ class TestGptOssReasoningParser:
             assert len(parsed["format"]["tags"]) == 3
             assert any(f"to={tool_name}<|channel|>commentary" in begin for begin in tag_begins)
             assert any(f"to={tool_name}<|channel|>analysis" in begin for begin in tag_begins)
+
+    def test_from_custom_function_to_tag(self):
+        """Test from_custom_function_to_tag function."""
+        # Create a mock custom function tool
+        mock_tool = Mock()
+        mock_tool.type = "function"
+        mock_tool.name = "get_weather"
+        mock_tool.parameters = {
+            "type": "object",
+            "properties": {
+                "location": {"type": "string"},
+                "unit": {"type": "string", "enum": ["celsius", "fahrenheit"]}
+            },
+            "required": ["location"]
+        }
+
+        tags = from_custom_function_to_tag(mock_tool)
+
+        # Should have 2 tags (commentary + analysis)
+        assert len(tags) == 2
+
+        # Check commentary channel tag
+        assert tags[0]["begin"] == "<|start|>assistant to=functions.get_weather<|channel|>commentary<|message|>"
+        assert tags[0]["content"]["type"] == "json_schema"
+        assert tags[0]["content"]["json_schema"] == mock_tool.parameters
+        assert tags[0]["end"] == "<|call|>"
+
+        # Check analysis channel tag
+        assert tags[1]["begin"] == "<|start|>assistant to=functions.get_weather<|channel|>analysis<|message|>"
+        assert tags[1]["content"]["type"] == "json_schema"
+        assert tags[1]["end"] == "<|call|>"
+
+    def test_prepare_structured_tag_with_custom_functions(self, reasoning_parser):
+        """Test prepare_structured_tag with custom function tools."""
+        # Create mock custom function tools
+        mock_tool1 = Mock()
+        mock_tool1.type = "function"
+        mock_tool1.name = "get_weather"
+        mock_tool1.parameters = {"type": "object", "properties": {"location": {"type": "string"}}, "required": ["location"]}
+
+        mock_tool2 = Mock()
+        mock_tool2.type = "function"
+        mock_tool2.name = "calculate"
+        mock_tool2.parameters = {"type": "object", "properties": {"expression": {"type": "string"}}, "required": ["expression"]}
+
+        custom_tools = [mock_tool1, mock_tool2]
+
+        result = reasoning_parser.prepare_structured_tag(None, None, custom_tools=custom_tools)
+        parsed = json.loads(result)
+
+        # Should have: 1 analysis + 2 functions × 2 channels = 5 tags
+        assert len(parsed["format"]["tags"]) == 5
+
+        # Check triggers
+        assert "<|start|>assistant to=functions." in parsed["format"]["triggers"]
+        assert "<|channel|>analysis" in parsed["format"]["triggers"]
+
+        # Check that function tags are present
+        tag_begins = [tag["begin"] for tag in parsed["format"]["tags"]]
+        assert any("to=functions.get_weather" in begin for begin in tag_begins)
+        assert any("to=functions.calculate" in begin for begin in tag_begins)
+
+    def test_prepare_structured_tag_with_builtin_and_custom(self, reasoning_parser):
+        """Test prepare_structured_tag with both builtin and custom tools."""
+        # Setup builtin tools
+        tool_server = Mock(spec=ToolServer)
+        tool_server.has_tool = Mock(side_effect=lambda tool: tool == "python")
+
+        # Setup custom tools
+        mock_tool = Mock()
+        mock_tool.type = "function"
+        mock_tool.name = "custom_func"
+        mock_tool.parameters = {"type": "object", "properties": {}}
+
+        result = reasoning_parser.prepare_structured_tag(None, tool_server, custom_tools=[mock_tool])
+        parsed = json.loads(result)
+
+        # Should have: 1 analysis + 2 python + 2 custom = 5 tags
+        assert len(parsed["format"]["tags"]) == 5
+
+        # Check triggers include both
+        assert "<|start|>assistant to=" in parsed["format"]["triggers"]
+        assert "<|start|>assistant to=functions." in parsed["format"]["triggers"]
+
+        # Check tags
+        tag_begins = [tag["begin"] for tag in parsed["format"]["tags"]]
+        assert any("to=python" in begin for begin in tag_begins)
+        assert any("to=functions.custom_func" in begin for begin in tag_begins)

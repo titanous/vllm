@@ -398,10 +398,20 @@ class OpenAIServingResponses(OpenAIServing):
                         sampling_params.structured_outputs = StructuredOutputsParams()
                     struct_out = sampling_params.structured_outputs
                     if struct_out.all_non_structural_tag_constraints_none():
+                        # Extract custom function tools from request
+                        custom_function_tools = None
+                        if request.tools:
+                            custom_function_tools = [
+                                tool
+                                for tool in request.tools
+                                if tool.type == "function"
+                            ]
+
                         sampling_params.structured_outputs.structural_tag = (
                             reasoning_parser.prepare_structured_tag(
                                 sampling_params.structured_outputs.structural_tag,
                                 self.tool_server,
+                                custom_tools=custom_function_tools,
                             )
                         )
                 generator = self._generate_with_builtin_tools(

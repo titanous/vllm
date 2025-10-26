@@ -78,6 +78,45 @@ def from_builtin_tool_to_tag(tool: str) -> list[dict]:
     return tags
 
 
+def from_custom_function_to_tag(tool) -> list[dict]:
+    """Generate structural tags for a custom function tool.
+
+    Args:
+        tool: Custom function tool with type="function" (Tool or ChatCompletionToolsParam)
+
+    Returns:
+        List of tag dictionaries (commentary + analysis channels)
+    """
+    # Handle both Tool and ChatCompletionToolsParam types
+    if hasattr(tool, 'type') and tool.type != "function":
+        raise ValueError(f"Expected function tool, got {tool.type}")
+
+    # Extract name and parameters
+    if hasattr(tool, 'function'):
+        # ChatCompletionToolsParam format
+        name = tool.function.name
+        parameters = tool.function.parameters
+    else:
+        # Tool format
+        name = tool.name
+        parameters = tool.parameters
+
+    tags = []
+    channels = ["commentary", "analysis"]
+
+    for channel in channels:
+        tags.append({
+            "begin": f"<|start|>assistant to=functions.{name}<|channel|>{channel}<|message|>",
+            "content": {
+                "type": "json_schema",
+                "json_schema": parameters
+            },
+            "end": "<|call|>"
+        })
+
+    return tags
+
+
 def tag_with_builtin_funcs(no_func_reaonsing_tag, builtin_tool_list: list[str]) -> dict:
     import copy
 
@@ -162,13 +201,22 @@ class GptOssReasoningParser(ReasoningParser):
 
     # This function prepares the structural tag to format reasoning output
     def prepare_structured_tag(
-        self, original_tag: str | None, tool_server: ToolServer | None
+        self,
+        original_tag: str | None,
+        tool_server: ToolServer | None,
+        custom_tools: list | None = None,
     ) -> str:
         if original_tag is None:
-            if tool_server is None:
+            # Check if we have any tools at all
+            has_builtin_tools = tool_server is not None
+            has_custom_tools = custom_tools is not None and len(custom_tools) > 0
+
+            if not has_builtin_tools and not has_custom_tools:
                 return json.dumps(no_func_reaonsing_tag)
-            else:
-                builtin_tool_list: list[str] = []
+
+            # Collect builtin tools
+            builtin_tool_list: list[str] = []
+            if tool_server is not None:
                 if tool_server.has_tool("browser"):
                     builtin_tool_list.append("browser")
                 if tool_server.has_tool("python"):
@@ -176,16 +224,28 @@ class GptOssReasoningParser(ReasoningParser):
                 if tool_server.has_tool("container"):
                     builtin_tool_list.append("container")
 
-                if len(builtin_tool_list) > 0:
-                    logger.info("Builtin_tool_list: %s", builtin_tool_list)
-                    func_tag = json.dumps(
-                        tag_with_builtin_funcs(no_func_reaonsing_tag, builtin_tool_list)
-                    )
-                else:
-                    logger.info("Builtin_tool_list is empty")
-                    func_tag = json.dumps(no_func_reaonsing_tag)
+            # Start with base tag or builtin tools
+            if len(builtin_tool_list) > 0:
+                logger.info("Builtin_tool_list: %s", builtin_tool_list)
+                func_tag = tag_with_builtin_funcs(no_func_reaonsing_tag, builtin_tool_list)
+            else:
+                import copy
 
-                return func_tag
+                func_tag = copy.deepcopy(no_func_reaonsing_tag)
+
+            # Add custom function tools
+            if has_custom_tools:
+                logger.info("Adding %d custom function tools", len(custom_tools))
+                # Add trigger for custom functions if not already present
+                if "<|start|>assistant to=functions." not in func_tag["format"]["triggers"]:
+                    func_tag["format"]["triggers"].append("<|start|>assistant to=functions.")
+
+                # Add tags for each custom function
+                for tool in custom_tools:
+                    if hasattr(tool, 'type') and tool.type == "function":
+                        func_tag["format"]["tags"].extend(from_custom_function_to_tag(tool))
+
+            return json.dumps(func_tag)
         else:
             # There is potential risk for appending the tag to the original tag
             return original_tag
