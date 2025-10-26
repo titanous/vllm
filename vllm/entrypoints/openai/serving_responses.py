@@ -920,11 +920,6 @@ class OpenAIServingResponses(OpenAIServing):
             and self.tool_server is not None
             and self.tool_server.has_tool("python")
         )
-        enable_container = (
-            "container" in tool_types
-            and self.tool_server is not None
-            and self.tool_server.has_tool("container")
-        )
         sys_msg = get_system_message(
             reasoning_effort=reasoning_effort,
             browser_description=(
@@ -935,11 +930,6 @@ class OpenAIServingResponses(OpenAIServing):
             python_description=(
                 self.tool_server.get_tool_description("python")
                 if enable_code_interpreter and self.tool_server is not None
-                else None
-            ),
-            container_description=(
-                self.tool_server.get_tool_description("container")
-                if enable_container and self.tool_server is not None
                 else None
             ),
             instructions=request.instructions,

@@ -34,7 +34,7 @@ def from_builtin_tool_to_tag(tool: str) -> list[dict]:
     """Generate structural tags for a builtin tool with proper JSON schemas.
 
     Args:
-        tool: Tool name (e.g., "browser", "python", "container")
+        tool: Tool name (e.g., "browser", "python")
 
     Returns:
         List of tag dictionaries with correct Harmony format patterns and schemas
@@ -46,8 +46,6 @@ def from_builtin_tool_to_tag(tool: str) -> list[dict]:
         config = ToolNamespaceConfig.browser()
     elif tool == "python":
         config = ToolNamespaceConfig.python()
-    elif tool == "container":
-        config = ToolNamespaceConfig.container()
     else:
         config = None
 

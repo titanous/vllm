@@ -107,20 +107,18 @@ class TestGptOssStructuralTagsIntegration:
         assert parsed_tag["type"] == "structural_tag"
 
     @pytest.mark.parametrize(
-        "browser, python, container, expected_tags",
+        "browser, python, expected_tags",
         [
             # No tools
-            (False, False, False, 1),
+            (False, False, 1),
             # Browser only: 3 functions × 2 channels + 1 analysis = 7
-            (True, False, False, 7),
+            (True, False, 7),
             # Browser + Python: 6 + 2 + 1 analysis = 9
-            (True, True, False, 9),
-            # All tools: 6 (browser) + 2 (python) + 2 (container) + 1 (analysis) = 11
-            (True, True, True, 11),
+            (True, True, 9),
         ],
     )
     def test_tool_server_interaction_flow(
-        self, gptoss_parser, browser, python, container, expected_tags
+        self, gptoss_parser, browser, python, expected_tags
     ):
         """Test the complete tool server interaction flow."""
 
@@ -132,7 +130,6 @@ class TestGptOssStructuralTagsIntegration:
             side_effect=lambda tool: {
                 "browser": browser,
                 "python": python,
-                "container": container,
             }.get(tool, False)
         )
 
@@ -152,8 +149,6 @@ class TestGptOssStructuralTagsIntegration:
             assert any("to=browser.find" in begin for begin in tag_begins)
         if python:
             assert any("to=python<|channel|>" in begin for begin in tag_begins)
-        if container:
-            assert any("to=container<|channel|>" in begin for begin in tag_begins)
 
     def test_original_tag_preservation(self, gptoss_parser, tool_server_with_python):
         """Test that original tags are preserved when provided."""
@@ -172,11 +167,7 @@ class TestGptOssStructuralTagsIntegration:
             [],
             ["browser"],
             ["python"],
-            ["container"],
             ["browser", "python"],
-            ["browser", "container"],
-            ["python", "container"],
-            ["browser", "python", "container"],
         ],
     )
     def test_json_validity_comprehensive(self, gptoss_parser, tools):
