@@ -236,7 +236,18 @@ def parse_response_input(
     return msg
 
 
-def parse_input_to_harmony_message(chat_msg) -> list[Message]:
+def is_builtin_tool(name: str) -> bool:
+    """Check if a tool name is a builtin tool."""
+    BUILTIN_TOOL_NAMES = {
+        "browser.search",
+        "browser.open",
+        "browser.find",
+        "python",
+    }
+    return name in BUILTIN_TOOL_NAMES
+
+
+def parse_chat_input(chat_msg) -> list[Message]:
     if not isinstance(chat_msg, dict):
         # Handle Pydantic models
         chat_msg = chat_msg.model_dump(exclude_none=True)
@@ -257,8 +268,16 @@ def parse_input_to_harmony_message(chat_msg) -> list[Message]:
             name = func.get("name", "")
             arguments = func.get("arguments", "") or ""
             msg = Message.from_role_and_content(Role.ASSISTANT, arguments)
-            msg = msg.with_channel("commentary")
-            msg = msg.with_recipient(f"functions.{name}")
+
+            # Builtin tools (browser.*, python*) use analysis channel and no prefix
+            # Custom functions use commentary channel with "functions." prefix
+            if is_builtin_tool(name):
+                msg = msg.with_channel("analysis")
+                msg = msg.with_recipient(name)
+            else:
+                msg = msg.with_channel("commentary")
+                msg = msg.with_recipient(f"functions.{name}")
+
             msg = msg.with_content_type("json")
             msgs.append(msg)
         return msgs
@@ -276,9 +295,16 @@ def parse_input_to_harmony_message(chat_msg) -> list[Message]:
                 if isinstance(item, dict) and item.get("type") == "text"
             )
 
+        # Builtin tools don't use "functions." prefix
+        # Custom functions use "functions." prefix
+        if is_builtin_tool(name):
+            author_name = name
+        else:
+            author_name = f"functions.{name}"
+
         msg = (
             Message.from_author_and_content(
-                Author.new(Role.TOOL, f"functions.{name}"), content
+                Author.new(Role.TOOL, author_name), content
             )
             .with_channel("commentary")
             .with_recipient("assistant")
@@ -315,7 +341,7 @@ def construct_harmony_previous_input_messages(
                     continue
                 messages.append(message)
             else:
-                harmony_messages = parse_input_to_harmony_message(message)
+                harmony_messages = parse_chat_input(message)
                 for harmony_msg in harmony_messages:
                     message_role = harmony_msg.author.role
                     # To match OpenAI, instructions, reasoning and tools are
