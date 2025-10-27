@@ -285,7 +285,20 @@ class StructuredOutputManager:
         if self.reasoner is not None:
             if self.enable_in_reasoning:
                 return True
+
             assert request.structured_output_request is not None
+
+            # Structural tags are designed to handle reasoning (analysis/commentary
+            # channels) and must be applied during reasoning, not just after.
+            # Unlike JSON schemas that might interfere with free-form reasoning,
+            # structural tags guide the reasoning output format.
+            if (request.sampling_params is not None
+                and request.sampling_params.structured_outputs is not None
+                and request.sampling_params.structured_outputs.structural_tag is not None):
+                logger.debug("Applying structural tag constraints during reasoning for request %s",
+                           request.request_id)
+                return True
+
             if request.structured_output_request.reasoning_ended is None:
                 request.structured_output_request.reasoning_ended = (
                     self.reasoner.is_reasoning_end(request.prompt_token_ids)
@@ -309,6 +322,12 @@ class StructuredOutputManager:
 
         # if the model needs structured in reasoning, we should advance
         if self.enable_in_reasoning:
+            return True
+
+        # Structural tags must be advanced during reasoning to track state
+        if (request.sampling_params is not None
+            and request.sampling_params.structured_outputs is not None
+            and request.sampling_params.structured_outputs.structural_tag is not None):
             return True
 
         structured_req = request.structured_output_request
