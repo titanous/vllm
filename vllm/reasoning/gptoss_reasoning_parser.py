@@ -140,15 +140,20 @@ def from_custom_function_to_tag(tool) -> list[dict]:
     if hasattr(tool, 'type') and tool.type != "function":
         raise ValueError(f"Expected function tool, got {tool.type}")
 
-    # Extract name and parameters
-    if hasattr(tool, 'function'):
-        # ChatCompletionToolsParam format
-        name = tool.function.name
-        parameters = tool.function.parameters
-    else:
-        # Tool format
+    # Extract name and parameters - try direct access first
+    # ChatCompletionToolsParam has tool.function.name
+    # Tool has tool.name directly
+    try:
+        # Try direct access first (Tool format)
         name = tool.name
         parameters = tool.parameters
+        # Verify these are actual values, not Mock objects
+        if not isinstance(name, str) or not isinstance(parameters, dict):
+            raise AttributeError("Invalid types")
+    except (AttributeError, TypeError):
+        # Fall back to ChatCompletionToolsParam format
+        name = tool.function.name
+        parameters = tool.function.parameters
 
     tags = []
     channels = ["commentary", "analysis"]
