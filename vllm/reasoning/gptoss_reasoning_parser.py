@@ -88,7 +88,10 @@ def from_builtin_tool_to_tag(tool: str) -> list[dict]:
         tool: Tool name (e.g., "browser", "python")
 
     Returns:
-        List of tag dictionaries with correct Harmony format patterns and schemas
+        List of tag dictionaries with correct Harmony format patterns and schemas.
+        Generates tags for both structural tag format variants:
+        - Format 1: to=X<|channel|>Y json<|message|>
+        - Format 2: <|channel|>Y to=X json<|message|>
     """
     from openai_harmony import ToolNamespaceConfig
 
@@ -107,8 +110,18 @@ def from_builtin_tool_to_tag(tool: str) -> list[dict]:
         # For each function in the tool namespace, create tags with JSON schemas
         for func in config.tools:
             for channel in channels:
+                # Format 1: to= before <|channel|>
                 tags.append({
                     "begin": f"<|start|>assistant to={tool}.{func.name}<|channel|>{channel} json<|message|>",
+                    "content": {
+                        "type": "json_schema",
+                        "json_schema": func.parameters
+                    },
+                    "end": "<|call|>"
+                })
+                # Format 2: <|channel|> before to=
+                tags.append({
+                    "begin": f"<|start|>assistant<|channel|>{channel} to={tool}.{func.name} json<|message|>",
                     "content": {
                         "type": "json_schema",
                         "json_schema": func.parameters
@@ -118,8 +131,15 @@ def from_builtin_tool_to_tag(tool: str) -> list[dict]:
     else:
         # Python or tools without function schemas - accept any text
         for channel in channels:
+            # Format 1: to= before <|channel|>
             tags.append({
                 "begin": f"<|start|>assistant to={tool}<|channel|>{channel} json<|message|>",
+                "content": {"type": "any_text"},
+                "end": "<|call|>"
+            })
+            # Format 2: <|channel|> before to=
+            tags.append({
+                "begin": f"<|start|>assistant<|channel|>{channel} to={tool} json<|message|>",
                 "content": {"type": "any_text"},
                 "end": "<|call|>"
             })
@@ -134,7 +154,7 @@ def from_custom_function_to_tag(tool) -> list[dict]:
         tool: Custom function tool with type="function" (Tool or ChatCompletionToolsParam)
 
     Returns:
-        List of tag dictionaries (commentary + analysis channels)
+        List of tag dictionaries (commentary channel only, both format variants)
     """
     # Handle both Tool and ChatCompletionToolsParam types
     if hasattr(tool, 'type') and tool.type != "function":
@@ -156,17 +176,28 @@ def from_custom_function_to_tag(tool) -> list[dict]:
         parameters = tool.function.parameters
 
     tags = []
-    channels = ["commentary", "analysis"]
+    # Custom functions only use commentary channel (analysis is for builtin tools only)
+    channel = "commentary"
 
-    for channel in channels:
-        tags.append({
-            "begin": f"<|start|>assistant to=functions.{name}<|channel|>{channel} json<|message|>",
-            "content": {
-                "type": "json_schema",
-                "json_schema": parameters
-            },
-            "end": "<|call|>"
-        })
+    # Format 1: to= before <|channel|>
+    tags.append({
+        "begin": f"<|start|>assistant to=functions.{name}<|channel|>{channel} json<|message|>",
+        "content": {
+            "type": "json_schema",
+            "json_schema": parameters
+        },
+        "end": "<|call|>"
+    })
+
+    # Format 2: <|channel|> before to=
+    tags.append({
+        "begin": f"<|start|>assistant<|channel|>{channel} to=functions.{name} json<|message|>",
+        "content": {
+            "type": "json_schema",
+            "json_schema": parameters
+        },
+        "end": "<|call|>"
+    })
 
     return tags
 
