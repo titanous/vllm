@@ -278,7 +278,7 @@ class TestGptOssStructuralTagsIntegration:
         # Test with no tools
         result_no_tools = gptoss_parser.prepare_structured_tag(None, None)
         parsed_no_tools = json.loads(result_no_tools)
-        assert parsed_no_tools["format"]["triggers"] == ["<|channel|>analysis"]
+        assert parsed_no_tools["format"]["triggers"] == ["<|start|>assistant"]
 
         # Test with tools
         tool_server = Mock(spec=ToolServer)
@@ -287,6 +287,5 @@ class TestGptOssStructuralTagsIntegration:
         result_with_tools = gptoss_parser.prepare_structured_tag(None, tool_server)
         parsed_with_tools = json.loads(result_with_tools)
 
-        # With tools, should have both analysis and tool call triggers
-        expected_triggers = ["<|channel|>analysis", "<|start|>assistant to="]
-        assert set(parsed_with_tools["format"]["triggers"]) == set(expected_triggers)
+        # All cases use same trigger - activates grammar at turn start
+        assert parsed_with_tools["format"]["triggers"] == ["<|start|>assistant"]

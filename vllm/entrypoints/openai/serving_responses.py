@@ -415,6 +415,10 @@ class OpenAIServingResponses(OpenAIServing):
                                 response_schema=sampling_params.structured_outputs.json,
                             )
                         )
+                        logger.debug(
+                            "Generated structural tag: %s",
+                            sampling_params.structured_outputs.structural_tag[:500]
+                        )
                 generator = self._generate_with_builtin_tools(
                     request_id=request.request_id,
                     request_prompt=request_prompts[i],
