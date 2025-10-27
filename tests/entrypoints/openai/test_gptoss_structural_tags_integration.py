@@ -55,16 +55,21 @@ class TestGptOssStructuralTagsIntegration:
         # Verify basic structure
         assert parsed_result["type"] == "structural_tag"
         assert parsed_result["format"]["type"] == "triggered_tags"
-        assert len(parsed_result["format"]["tags"]) == 1
+        assert len(parsed_result["format"]["tags"]) == 3
 
-        # Verify only analysis channel is allowed
-        analysis_tag = parsed_result["format"]["tags"][0]
-        assert analysis_tag["begin"] == "<|channel|>analysis<|message|>"
-        assert analysis_tag["content"]["type"] == "any_text"
-        assert analysis_tag["end"] == "<|end|>"
+        # Verify all three channels are present (analysis, commentary, final)
+        tag_begins = [tag["begin"] for tag in parsed_result["format"]["tags"]]
+        assert "<|start|>assistant<|channel|>analysis<|message|>" in tag_begins
+        assert "<|start|>assistant<|channel|>commentary<|message|>" in tag_begins
+        assert "<|start|>assistant<|channel|>final<|message|>" in tag_begins
 
-        # Verify triggers
-        assert parsed_result["format"]["triggers"] == ["<|channel|>analysis"]
+        # Verify all tags have correct structure
+        for tag in parsed_result["format"]["tags"]:
+            assert tag["content"]["type"] == "any_text"
+            assert tag["end"] == "<|end|>"
+
+        # Verify trigger
+        assert parsed_result["format"]["triggers"] == ["<|start|>assistant"]
         assert parsed_result["format"]["stop_after_first"] is False
 
     def test_end_to_end_with_python_tool(self, gptoss_parser, tool_server_with_python):
@@ -72,20 +77,21 @@ class TestGptOssStructuralTagsIntegration:
         result = gptoss_parser.prepare_structured_tag(None, tool_server_with_python)
         parsed_result = json.loads(result)
 
-        # Python: 2 tags (commentary + analysis) + 1 analysis = 3 tags
-        assert len(parsed_result["format"]["tags"]) == 3
+        # Python: 2 tags (commentary + analysis) + 3 base = 5 tags
+        assert len(parsed_result["format"]["tags"]) == 5
 
-        # Verify all expected tags use correct Harmony format
+        # Verify all expected tags use correct Harmony format with json content_type
         tag_begins = [tag["begin"] for tag in parsed_result["format"]["tags"]]
-        # Analysis tag
-        assert "<|channel|>analysis<|message|>" in tag_begins
-        # Python tool tags with correct format
-        assert any("to=python<|channel|>commentary<|message|>" in begin for begin in tag_begins)
-        assert any("to=python<|channel|>analysis<|message|>" in begin for begin in tag_begins)
+        # Base tags
+        assert "<|start|>assistant<|channel|>analysis<|message|>" in tag_begins
+        assert "<|start|>assistant<|channel|>commentary<|message|>" in tag_begins
+        assert "<|start|>assistant<|channel|>final<|message|>" in tag_begins
+        # Python tool tags with json content_type
+        assert any("to=python<|channel|>commentary json<|message|>" in begin for begin in tag_begins)
+        assert any("to=python<|channel|>analysis json<|message|>" in begin for begin in tag_begins)
 
-        # Verify triggers use correct format
-        assert "<|channel|>analysis" in parsed_result["format"]["triggers"]
-        assert "<|start|>assistant to=" in parsed_result["format"]["triggers"]
+        # Verify trigger
+        assert parsed_result["format"]["triggers"] == ["<|start|>assistant"]
 
     def test_structured_outputs_params_integration(
         self, gptoss_parser, tool_server_with_python
@@ -109,12 +115,12 @@ class TestGptOssStructuralTagsIntegration:
     @pytest.mark.parametrize(
         "browser, python, expected_tags",
         [
-            # No tools
-            (False, False, 1),
-            # Browser only: 3 functions × 2 channels + 1 analysis = 7
-            (True, False, 7),
-            # Browser + Python: 6 + 2 + 1 analysis = 9
-            (True, True, 9),
+            # No tools: 3 base tags (analysis, commentary, final)
+            (False, False, 3),
+            # Browser only: 3 functions × 2 channels + 3 base = 9
+            (True, False, 9),
+            # Browser + Python: 6 browser + 2 python + 3 base = 11
+            (True, True, 11),
         ],
     )
     def test_tool_server_interaction_flow(
@@ -140,15 +146,15 @@ class TestGptOssStructuralTagsIntegration:
         # Validate number of tags
         assert len(parsed_result["format"]["tags"]) == expected_tags
 
-        # Verify tool-specific tags use correct Harmony format
+        # Verify tool-specific tags use correct Harmony format with json content_type
         tag_begins = [tag["begin"] for tag in parsed_result["format"]["tags"]]
         if browser:
-            # Browser should have function-specific tags
-            assert any("to=browser.search" in begin for begin in tag_begins)
-            assert any("to=browser.open" in begin for begin in tag_begins)
-            assert any("to=browser.find" in begin for begin in tag_begins)
+            # Browser should have function-specific tags with json content_type
+            assert any("to=browser.search" in begin and " json<|message|>" in begin for begin in tag_begins)
+            assert any("to=browser.open" in begin and " json<|message|>" in begin for begin in tag_begins)
+            assert any("to=browser.find" in begin and " json<|message|>" in begin for begin in tag_begins)
         if python:
-            assert any("to=python<|channel|>" in begin for begin in tag_begins)
+            assert any("to=python<|channel|>" in begin and " json<|message|>" in begin for begin in tag_begins)
 
     def test_original_tag_preservation(self, gptoss_parser, tool_server_with_python):
         """Test that original tags are preserved when provided."""
@@ -188,10 +194,10 @@ class TestGptOssStructuralTagsIntegration:
         assert "triggers" in parsed_result["format"]
 
         # Calculate expected tag count:
-        # - 1 analysis tag (always)
+        # - 3 base tags (analysis, commentary, final) - always present
         # - browser: 3 functions × 2 channels = 6 tags
-        # - python/container: 2 channels each = 2 tags each
-        expected_tag_count = 1
+        # - python: 2 channels = 2 tags
+        expected_tag_count = 3
         for tool in tools:
             if tool == "browser":
                 expected_tag_count += 6

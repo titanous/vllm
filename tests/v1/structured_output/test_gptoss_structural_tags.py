@@ -11,10 +11,10 @@ import pytest
 from vllm.entrypoints.tool_server import ToolServer
 from vllm.reasoning.gptoss_reasoning_parser import (
     GptOssReasoningParser,
+    create_response_schema_tag,
     from_builtin_tool_to_tag,
     from_custom_function_to_tag,
     no_func_reaonsing_tag,
-    tag_with_builtin_funcs,
 )
 
 
@@ -52,7 +52,7 @@ class TestGptOssReasoningParser:
         """Create a mock ToolServer with all builtin tools."""
         tool_server = Mock(spec=ToolServer)
         tool_server.has_tool = Mock(
-            side_effect=lambda tool: tool in ["browser", "python", "container"]
+            side_effect=lambda tool: tool in ["browser", "python"]
         )
         return tool_server
 
@@ -67,9 +67,15 @@ class TestGptOssReasoningParser:
         parsed = json.loads(result)
         assert parsed["type"] == "structural_tag"
         assert parsed["format"]["type"] == "triggered_tags"
-        assert len(parsed["format"]["tags"]) == 1
-        assert parsed["format"]["tags"][0]["begin"] == "<|channel|>analysis<|message|>"
-        assert parsed["format"]["triggers"] == ["<|channel|>analysis"]
+        assert len(parsed["format"]["tags"]) == 3
+
+        # Check all three channels are present
+        tag_begins = [tag["begin"] for tag in parsed["format"]["tags"]]
+        assert "<|start|>assistant<|channel|>analysis<|message|>" in tag_begins
+        assert "<|start|>assistant<|channel|>commentary<|message|>" in tag_begins
+        assert "<|start|>assistant<|channel|>final<|message|>" in tag_begins
+
+        assert parsed["format"]["triggers"] == ["<|start|>assistant"]
 
     def test_prepare_structured_tag_with_all_tools(
         self, reasoning_parser, mock_tool_server_with_all_tools
@@ -82,19 +88,17 @@ class TestGptOssReasoningParser:
 
         # Browser has 3 functions × 2 channels = 6 tags
         # Python has no functions × 2 channels = 2 tags
-        # Container has no functions × 2 channels = 2 tags
-        # Plus 1 analysis tag = 11 total
+        # Plus 3 base tags (analysis, commentary, final) = 11 total
         assert len(parsed["format"]["tags"]) == 11
 
-        # Check that tool-specific tags use correct Harmony format
+        # Check that tool-specific tags use correct Harmony format with json content_type
         tag_begins = [tag["begin"] for tag in parsed["format"]["tags"]]
         # Browser should have function-specific tags (browser.search, browser.open, browser.find)
-        assert any("to=browser.search" in begin for begin in tag_begins)
-        assert any("to=browser.open" in begin for begin in tag_begins)
-        assert any("to=browser.find" in begin for begin in tag_begins)
-        # Python and container should have generic tags
-        assert any("to=python<|channel|>" in begin for begin in tag_begins)
-        assert any("to=container<|channel|>" in begin for begin in tag_begins)
+        assert any("to=browser.search<|channel|>" in begin and " json<|message|>" in begin for begin in tag_begins)
+        assert any("to=browser.open<|channel|>" in begin and " json<|message|>" in begin for begin in tag_begins)
+        assert any("to=browser.find<|channel|>" in begin and " json<|message|>" in begin for begin in tag_begins)
+        # Python should have generic tags with json content_type
+        assert any("to=python<|channel|>" in begin and " json<|message|>" in begin for begin in tag_begins)
 
     def test_prepare_structured_tag_with_original_tag(self, reasoning_parser):
         """Test prepare_structured_tag when original_tag is provided."""
@@ -109,39 +113,26 @@ class TestGptOssReasoningParser:
         # Python has no functions, so it should have 2 generic tags (commentary + analysis)
         python_tags = from_builtin_tool_to_tag("python")
         assert len(python_tags) == 2
-        assert python_tags[0]["begin"] == "<|start|>assistant to=python<|channel|>commentary<|message|>"
+        assert python_tags[0]["begin"] == "<|start|>assistant to=python<|channel|>commentary json<|message|>"
         assert python_tags[0]["content"]["type"] == "any_text"
         assert python_tags[0]["end"] == "<|call|>"
-        assert python_tags[1]["begin"] == "<|start|>assistant to=python<|channel|>analysis<|message|>"
+        assert python_tags[1]["begin"] == "<|start|>assistant to=python<|channel|>analysis json<|message|>"
         assert python_tags[1]["end"] == "<|call|>"
 
         # Browser has 3 functions, so it should have 6 tags (3 functions × 2 channels)
         browser_tags = from_builtin_tool_to_tag("browser")
         assert len(browser_tags) == 6
-        # Check that browser tags include function names and JSON schemas
+        # Check that browser tags include function names, JSON schemas, and json content_type
         tag_begins = [tag["begin"] for tag in browser_tags]
-        assert any("to=browser.search" in begin for begin in tag_begins)
-        assert any("to=browser.open" in begin for begin in tag_begins)
-        assert any("to=browser.find" in begin for begin in tag_begins)
+        assert any("to=browser.search" in begin and " json<|message|>" in begin for begin in tag_begins)
+        assert any("to=browser.open" in begin and " json<|message|>" in begin for begin in tag_begins)
+        assert any("to=browser.find" in begin and " json<|message|>" in begin for begin in tag_begins)
         # Verify schemas are present (not any_text)
         for tag in browser_tags:
             assert tag["content"]["type"] == "json_schema"
             assert "json_schema" in tag["content"]
-
-    def test_tag_with_builtin_funcs(self):
-        """Test tag_with_builtin_funcs function."""
-        builtin_tools = ["browser", "python"]
-        result = tag_with_builtin_funcs(no_func_reaonsing_tag, builtin_tools)
-
-        assert result["type"] == "structural_tag"
-        # Browser: 3 functions × 2 channels = 6 tags
-        # Python: 0 functions × 2 channels = 2 tags
-        # Plus original analysis tag = 9 total
-        assert len(result["format"]["tags"]) == 9
-
-        # Should have added tool call trigger with correct Harmony format
-        assert "<|start|>assistant to=" in result["format"]["triggers"]
-        assert "<|channel|>analysis" in result["format"]["triggers"]
+            # Verify json content_type is in begin
+            assert " json<|message|>" in tag["begin"]
 
     def test_tag_structure_invariants(self):
         """Test that the basic tag structure follows expected format."""
@@ -150,11 +141,17 @@ class TestGptOssReasoningParser:
         assert no_func_reaonsing_tag["format"]["type"] == "triggered_tags"
         assert no_func_reaonsing_tag["format"]["stop_after_first"] is False
 
-        # Verify analysis tag structure
-        analysis_tag = no_func_reaonsing_tag["format"]["tags"][0]
-        assert analysis_tag["begin"] == "<|channel|>analysis<|message|>"
-        assert analysis_tag["content"]["type"] == "any_text"
-        assert analysis_tag["end"] == "<|end|>"
+        # Should have 3 tags: analysis, commentary, final
+        assert len(no_func_reaonsing_tag["format"]["tags"]) == 3
+
+        # Verify all tags have correct structure
+        for tag in no_func_reaonsing_tag["format"]["tags"]:
+            assert tag["begin"].startswith("<|start|>assistant<|channel|>")
+            assert tag["content"]["type"] == "any_text"
+            assert tag["end"] == "<|end|>"
+
+        # Verify trigger is correct
+        assert no_func_reaonsing_tag["format"]["triggers"] == ["<|start|>assistant"]
 
     def test_json_serialization_valid(
         self, reasoning_parser, mock_tool_server_with_all_tools
@@ -176,7 +173,7 @@ class TestGptOssReasoningParser:
         )
         json.loads(result3)  # Should not raise
 
-    @pytest.mark.parametrize("tool_name", ["browser", "python", "container"])
+    @pytest.mark.parametrize("tool_name", ["browser", "python"])
     def test_single_tool_integration(self, reasoning_parser, tool_name):
         """Test integration with individual tools."""
         tool_server = Mock(spec=ToolServer)
@@ -188,17 +185,17 @@ class TestGptOssReasoningParser:
         tag_begins = [tag["begin"] for tag in parsed["format"]["tags"]]
 
         if tool_name == "browser":
-            # Browser has 3 functions × 2 channels + 1 analysis = 7 tags
-            assert len(parsed["format"]["tags"]) == 7
-            # Check for function-specific tags
-            assert any("to=browser.search" in begin for begin in tag_begins)
-            assert any("to=browser.open" in begin for begin in tag_begins)
-            assert any("to=browser.find" in begin for begin in tag_begins)
+            # Browser has 3 functions × 2 channels + 3 base = 9 tags
+            assert len(parsed["format"]["tags"]) == 9
+            # Check for function-specific tags with json content_type
+            assert any("to=browser.search" in begin and " json<|message|>" in begin for begin in tag_begins)
+            assert any("to=browser.open" in begin and " json<|message|>" in begin for begin in tag_begins)
+            assert any("to=browser.find" in begin and " json<|message|>" in begin for begin in tag_begins)
         else:
-            # Python/container: 2 tags (commentary + analysis) + 1 analysis = 3 tags
-            assert len(parsed["format"]["tags"]) == 3
-            assert any(f"to={tool_name}<|channel|>commentary" in begin for begin in tag_begins)
-            assert any(f"to={tool_name}<|channel|>analysis" in begin for begin in tag_begins)
+            # Python: 2 tags (commentary + analysis) + 3 base = 5 tags
+            assert len(parsed["format"]["tags"]) == 5
+            assert any(f"to={tool_name}<|channel|>commentary json<|message|>" in begin for begin in tag_begins)
+            assert any(f"to={tool_name}<|channel|>analysis json<|message|>" in begin for begin in tag_begins)
 
     def test_from_custom_function_to_tag(self):
         """Test from_custom_function_to_tag function."""
@@ -221,13 +218,13 @@ class TestGptOssReasoningParser:
         assert len(tags) == 2
 
         # Check commentary channel tag
-        assert tags[0]["begin"] == "<|start|>assistant to=functions.get_weather<|channel|>commentary<|message|>"
+        assert tags[0]["begin"] == "<|start|>assistant to=functions.get_weather<|channel|>commentary json<|message|>"
         assert tags[0]["content"]["type"] == "json_schema"
         assert tags[0]["content"]["json_schema"] == mock_tool.parameters
         assert tags[0]["end"] == "<|call|>"
 
         # Check analysis channel tag
-        assert tags[1]["begin"] == "<|start|>assistant to=functions.get_weather<|channel|>analysis<|message|>"
+        assert tags[1]["begin"] == "<|start|>assistant to=functions.get_weather<|channel|>analysis json<|message|>"
         assert tags[1]["content"]["type"] == "json_schema"
         assert tags[1]["end"] == "<|call|>"
 
@@ -249,17 +246,16 @@ class TestGptOssReasoningParser:
         result = reasoning_parser.prepare_structured_tag(None, None, custom_tools=custom_tools)
         parsed = json.loads(result)
 
-        # Should have: 1 analysis + 2 functions × 2 channels = 5 tags
-        assert len(parsed["format"]["tags"]) == 5
+        # Should have: 3 base + 2 functions × 2 channels = 7 tags
+        assert len(parsed["format"]["tags"]) == 7
 
-        # Check triggers
-        assert "<|start|>assistant to=functions." in parsed["format"]["triggers"]
-        assert "<|channel|>analysis" in parsed["format"]["triggers"]
+        # Check trigger
+        assert parsed["format"]["triggers"] == ["<|start|>assistant"]
 
-        # Check that function tags are present
+        # Check that function tags are present with json content_type
         tag_begins = [tag["begin"] for tag in parsed["format"]["tags"]]
-        assert any("to=functions.get_weather" in begin for begin in tag_begins)
-        assert any("to=functions.calculate" in begin for begin in tag_begins)
+        assert any("to=functions.get_weather" in begin and " json<|message|>" in begin for begin in tag_begins)
+        assert any("to=functions.calculate" in begin and " json<|message|>" in begin for begin in tag_begins)
 
     def test_prepare_structured_tag_with_builtin_and_custom(self, reasoning_parser):
         """Test prepare_structured_tag with both builtin and custom tools."""
@@ -276,14 +272,72 @@ class TestGptOssReasoningParser:
         result = reasoning_parser.prepare_structured_tag(None, tool_server, custom_tools=[mock_tool])
         parsed = json.loads(result)
 
-        # Should have: 1 analysis + 2 python + 2 custom = 5 tags
-        assert len(parsed["format"]["tags"]) == 5
+        # Should have: 3 base + 2 python + 2 custom = 7 tags
+        assert len(parsed["format"]["tags"]) == 7
 
-        # Check triggers include both
-        assert "<|start|>assistant to=" in parsed["format"]["triggers"]
-        assert "<|start|>assistant to=functions." in parsed["format"]["triggers"]
+        # Check trigger
+        assert parsed["format"]["triggers"] == ["<|start|>assistant"]
 
-        # Check tags
+        # Check tags with json content_type
         tag_begins = [tag["begin"] for tag in parsed["format"]["tags"]]
-        assert any("to=python" in begin for begin in tag_begins)
-        assert any("to=functions.custom_func" in begin for begin in tag_begins)
+        assert any("to=python" in begin and " json<|message|>" in begin for begin in tag_begins)
+        assert any("to=functions.custom_func" in begin and " json<|message|>" in begin for begin in tag_begins)
+
+    def test_response_schema_restricts_to_final_only(self, reasoning_parser):
+        """Test that response_schema disables tools and reasoning."""
+        tool_server = Mock(spec=ToolServer)
+        tool_server.has_tool = Mock(side_effect=lambda tool: tool == "browser")
+
+        response_schema = {
+            "type": "object",
+            "properties": {"answer": {"type": "string"}},
+            "required": ["answer"]
+        }
+
+        result = reasoning_parser.prepare_structured_tag(
+            None, tool_server, custom_tools=None, response_schema=response_schema
+        )
+        parsed = json.loads(result)
+
+        # Should have ONLY final channel tag with JSON schema
+        assert len(parsed["format"]["tags"]) == 1
+        assert parsed["format"]["tags"][0]["begin"] == "<|start|>assistant<|channel|>final json<|message|>"
+        assert parsed["format"]["tags"][0]["content"]["type"] == "json_schema"
+        assert parsed["format"]["tags"][0]["content"]["json_schema"] == response_schema
+        assert parsed["format"]["stop_after_first"] is True
+
+        # No tool call tags should be present
+        tag_begins = [tag["begin"] for tag in parsed["format"]["tags"]]
+        assert not any("to=browser" in begin for begin in tag_begins)
+
+    def test_response_schema_as_string(self, reasoning_parser):
+        """Test that response_schema works when passed as JSON string."""
+        response_schema_str = '{"type": "object", "properties": {"result": {"type": "number"}}}'
+
+        result = reasoning_parser.prepare_structured_tag(
+            None, None, custom_tools=None, response_schema=response_schema_str
+        )
+        parsed = json.loads(result)
+
+        assert len(parsed["format"]["tags"]) == 1
+        assert parsed["format"]["tags"][0]["content"]["type"] == "json_schema"
+        # Verify the schema was parsed correctly
+        assert parsed["format"]["tags"][0]["content"]["json_schema"]["properties"]["result"]["type"] == "number"
+
+    def test_tool_calls_include_json_content_type(self):
+        """Test that all tool call patterns include json content_type."""
+        browser_tags = from_builtin_tool_to_tag("browser")
+
+        for tag in browser_tags:
+            # All tool calls must have ' json<|message|>' in begin
+            assert " json<|message|>" in tag["begin"]
+            assert tag["begin"].startswith("<|start|>assistant to=")
+            assert "<|channel|>" in tag["begin"]
+
+    def test_commentary_channel_supported(self, reasoning_parser):
+        """Test that commentary channel is included in base tags."""
+        result = reasoning_parser.prepare_structured_tag(None, None)
+        parsed = json.loads(result)
+
+        tag_begins = [tag["begin"] for tag in parsed["format"]["tags"]]
+        assert any("<|channel|>commentary<|message|>" in begin for begin in tag_begins)

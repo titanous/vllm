@@ -412,6 +412,7 @@ class OpenAIServingResponses(OpenAIServing):
                                 sampling_params.structured_outputs.structural_tag,
                                 self.tool_server,
                                 custom_tools=custom_function_tools,
+                                response_schema=sampling_params.structured_outputs.json,
                             )
                         )
                 generator = self._generate_with_builtin_tools(

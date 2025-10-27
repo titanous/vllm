@@ -18,16 +18,67 @@ no_func_reaonsing_tag = {
     "format": {
         "type": "triggered_tags",
         "tags": [
+            # Analysis channel: reasoning/thinking
             {
-                "begin": "<|channel|>analysis<|message|>",
+                "begin": "<|start|>assistant<|channel|>analysis<|message|>",
                 "content": {"type": "any_text"},
                 "end": "<|end|>",
-            }
+            },
+            # Commentary channel: internal thoughts
+            {
+                "begin": "<|start|>assistant<|channel|>commentary<|message|>",
+                "content": {"type": "any_text"},
+                "end": "<|end|>",
+            },
+            # Final channel: output to user
+            {
+                "begin": "<|start|>assistant<|channel|>final<|message|>",
+                "content": {"type": "any_text"},
+                "end": "<|end|>",
+            },
         ],
-        "triggers": ["<|channel|>analysis"],
+        "triggers": ["<|start|>assistant"],
         "stop_after_first": False,
     },
 }
+
+
+def create_response_schema_tag(response_schema: dict | str) -> dict:
+    """Create structural tag that ONLY allows final output with JSON schema.
+
+    Used when user requests response_format with json_schema.
+    Disables tool calls and reasoning - forces direct JSON output.
+
+    Args:
+        response_schema: JSON schema as dict or JSON string
+
+    Returns:
+        Structural tag dict that restricts to final channel with schema
+    """
+    schema_dict = (
+        json.loads(response_schema)
+        if isinstance(response_schema, str)
+        else response_schema
+    )
+
+    return {
+        "type": "structural_tag",
+        "format": {
+            "type": "triggered_tags",
+            "tags": [
+                {
+                    "begin": "<|start|>assistant<|channel|>final json<|message|>",
+                    "content": {
+                        "type": "json_schema",
+                        "json_schema": schema_dict
+                    },
+                    "end": "<|end|>",
+                },
+            ],
+            "triggers": ["<|start|>assistant"],
+            "stop_after_first": True,
+        },
+    }
 
 
 def from_builtin_tool_to_tag(tool: str) -> list[dict]:
@@ -57,7 +108,7 @@ def from_builtin_tool_to_tag(tool: str) -> list[dict]:
         for func in config.tools:
             for channel in channels:
                 tags.append({
-                    "begin": f"<|start|>assistant to={tool}.{func.name}<|channel|>{channel}<|message|>",
+                    "begin": f"<|start|>assistant to={tool}.{func.name}<|channel|>{channel} json<|message|>",
                     "content": {
                         "type": "json_schema",
                         "json_schema": func.parameters
@@ -68,7 +119,7 @@ def from_builtin_tool_to_tag(tool: str) -> list[dict]:
         # Python or tools without function schemas - accept any text
         for channel in channels:
             tags.append({
-                "begin": f"<|start|>assistant to={tool}<|channel|>{channel}<|message|>",
+                "begin": f"<|start|>assistant to={tool}<|channel|>{channel} json<|message|>",
                 "content": {"type": "any_text"},
                 "end": "<|call|>"
             })
@@ -104,7 +155,7 @@ def from_custom_function_to_tag(tool) -> list[dict]:
 
     for channel in channels:
         tags.append({
-            "begin": f"<|start|>assistant to=functions.{name}<|channel|>{channel}<|message|>",
+            "begin": f"<|start|>assistant to=functions.{name}<|channel|>{channel} json<|message|>",
             "content": {
                 "type": "json_schema",
                 "json_schema": parameters
@@ -113,19 +164,6 @@ def from_custom_function_to_tag(tool) -> list[dict]:
         })
 
     return tags
-
-
-def tag_with_builtin_funcs(no_func_reaonsing_tag, builtin_tool_list: list[str]) -> dict:
-    import copy
-
-    new_tag = copy.deepcopy(no_func_reaonsing_tag)
-    # Add trigger for tool calls - matches the actual Harmony format
-    # where "to={tool}" appears BEFORE "<|channel|>"
-    new_tag["format"]["triggers"].append("<|start|>assistant to=")
-
-    for tool in builtin_tool_list:
-        new_tag["format"]["tags"].extend(from_builtin_tool_to_tag(tool))
-    return new_tag
 
 
 @ReasoningParserManager.register_module("openai_gptoss")
@@ -203,47 +241,59 @@ class GptOssReasoningParser(ReasoningParser):
         original_tag: str | None,
         tool_server: ToolServer | None,
         custom_tools: list | None = None,
+        response_schema: dict | str | None = None,
     ) -> str:
-        if original_tag is None:
-            # Check if we have any tools at all
-            has_builtin_tools = tool_server is not None
-            has_custom_tools = custom_tools is not None and len(custom_tools) > 0
+        """Prepare structural tag for Harmony-based generation.
 
-            if not has_builtin_tools and not has_custom_tools:
-                return json.dumps(no_func_reaonsing_tag)
+        Args:
+            original_tag: Pre-existing structural tag (if provided, returned as-is)
+            tool_server: Server providing builtin tools (browser, python, container)
+            custom_tools: List of custom function tools
+            response_schema: JSON schema for response_format (disables tools/reasoning)
 
-            # Collect builtin tools
-            builtin_tool_list: list[str] = []
-            if tool_server is not None:
-                if tool_server.has_tool("browser"):
-                    builtin_tool_list.append("browser")
-                if tool_server.has_tool("python"):
-                    builtin_tool_list.append("python")
-                if tool_server.has_tool("container"):
-                    builtin_tool_list.append("container")
+        Returns:
+            JSON-serialized structural tag
+        """
+        if original_tag is not None:
+            return original_tag
 
-            # Start with base tag or builtin tools
+        # If response_schema provided, ONLY allow final output with that schema
+        # Disables all tool calls and reasoning
+        if response_schema is not None:
+            logger.info("Response schema provided - restricting to final output only")
+            return json.dumps(create_response_schema_tag(response_schema))
+
+        # Check if we have any tools
+        has_builtin_tools = tool_server is not None
+        has_custom_tools = custom_tools is not None and len(custom_tools) > 0
+
+        # No tools - return base tag with analysis/commentary/final channels
+        if not has_builtin_tools and not has_custom_tools:
+            return json.dumps(no_func_reaonsing_tag)
+
+        # Build tag with tools
+        import copy
+
+        func_tag = copy.deepcopy(no_func_reaonsing_tag)
+
+        # Add builtin tools
+        if tool_server is not None:
+            builtin_tool_list = []
+            if tool_server.has_tool("browser"):
+                builtin_tool_list.append("browser")
+            if tool_server.has_tool("python"):
+                builtin_tool_list.append("python")
+
             if len(builtin_tool_list) > 0:
                 logger.info("Builtin_tool_list: %s", builtin_tool_list)
-                func_tag = tag_with_builtin_funcs(no_func_reaonsing_tag, builtin_tool_list)
-            else:
-                import copy
+                for tool in builtin_tool_list:
+                    func_tag["format"]["tags"].extend(from_builtin_tool_to_tag(tool))
 
-                func_tag = copy.deepcopy(no_func_reaonsing_tag)
+        # Add custom function tools
+        if has_custom_tools:
+            logger.info("Adding %d custom function tools", len(custom_tools))
+            for tool in custom_tools:
+                if hasattr(tool, "type") and tool.type == "function":
+                    func_tag["format"]["tags"].extend(from_custom_function_to_tag(tool))
 
-            # Add custom function tools
-            if has_custom_tools:
-                logger.info("Adding %d custom function tools", len(custom_tools))
-                # Add trigger for custom functions if not already present
-                if "<|start|>assistant to=functions." not in func_tag["format"]["triggers"]:
-                    func_tag["format"]["triggers"].append("<|start|>assistant to=functions.")
-
-                # Add tags for each custom function
-                for tool in custom_tools:
-                    if hasattr(tool, 'type') and tool.type == "function":
-                        func_tag["format"]["tags"].extend(from_custom_function_to_tag(tool))
-
-            return json.dumps(func_tag)
-        else:
-            # There is potential risk for appending the tag to the original tag
-            return original_tag
+        return json.dumps(func_tag)
