@@ -273,6 +273,73 @@ class GptOssReasoningParser(ReasoningParser):
             "gpt-oss has a special branch for parsing reasoning in non-streaming mode. This method shouldn't be used."  # noqa: E501
         )
 
+    def _build_tool_tags(
+        self,
+        tool_server: ToolServer | None,
+        custom_tools: list | None,
+    ) -> list[dict]:
+        """Build structural tags for all tools (builtin + custom).
+
+        Args:
+            tool_server: Server providing builtin tools
+            custom_tools: List of custom function tools
+
+        Returns:
+            List of structural tag dicts for all tools
+        """
+        tool_tags = []
+
+        # Add builtin tools
+        if tool_server is not None:
+            builtin_tool_list = []
+            if tool_server.has_tool("browser"):
+                builtin_tool_list.append("browser")
+            if tool_server.has_tool("python"):
+                builtin_tool_list.append("python")
+
+            if len(builtin_tool_list) > 0:
+                logger.info("Builtin_tool_list: %s", builtin_tool_list)
+                for tool in builtin_tool_list:
+                    tool_tags.extend(from_builtin_tool_to_tag(tool))
+
+        # Add custom function tools
+        if custom_tools is not None and len(custom_tools) > 0:
+            logger.info("Adding %d custom function tools", len(custom_tools))
+            for tool in custom_tools:
+                if hasattr(tool, "type") and tool.type == "function":
+                    tool_tags.extend(from_custom_function_to_tag(tool))
+
+        return tool_tags
+
+    def _apply_response_schema_to_final_channel(
+        self,
+        tag_structure: dict,
+        response_schema: dict | str,
+    ) -> None:
+        """Replace final channel tag with schema-constrained version.
+
+        Args:
+            tag_structure: Structural tag dict to modify in-place
+            response_schema: JSON schema for final output
+        """
+        schema_dict = (
+            json.loads(response_schema)
+            if isinstance(response_schema, str)
+            else response_schema
+        )
+
+        for i, tag in enumerate(tag_structure["format"]["tags"]):
+            if tag["begin"] == "<|channel|>final<|message|>":
+                tag_structure["format"]["tags"][i] = {
+                    "begin": "<|channel|>final json<|message|>",
+                    "content": {
+                        "type": "json_schema",
+                        "json_schema": schema_dict
+                    },
+                    "end": "<|end|>",
+                }
+                break
+
     # This function prepares the structural tag to format reasoning output
     def prepare_structured_tag(
         self,
@@ -287,7 +354,7 @@ class GptOssReasoningParser(ReasoningParser):
             original_tag: Pre-existing structural tag (if provided, returned as-is)
             tool_server: Server providing builtin tools (browser, python, container)
             custom_tools: List of custom function tools
-            response_schema: JSON schema for response_format (disables tools/reasoning)
+            response_schema: JSON schema for response_format
 
         Returns:
             JSON-serialized structural tag
@@ -295,43 +362,27 @@ class GptOssReasoningParser(ReasoningParser):
         if original_tag is not None:
             return original_tag
 
-        # If response_schema provided, ONLY allow final output with that schema
-        # Disables all tool calls and reasoning
-        if response_schema is not None:
+        # Build tool tags (both builtin and custom)
+        tool_tags = self._build_tool_tags(tool_server, custom_tools)
+
+        # Case 1: response_schema only (no tools) - restrict to final output only
+        if response_schema is not None and not tool_tags:
             logger.info("Response schema provided - restricting to final output only")
             return json.dumps(create_response_schema_tag(response_schema))
 
-        # Check if we have any tools
-        has_builtin_tools = tool_server is not None
-        has_custom_tools = custom_tools is not None and len(custom_tools) > 0
-
-        # No tools - return base tag with analysis/commentary/final channels
-        if not has_builtin_tools and not has_custom_tools:
+        # Case 2: No tools and no response_schema - base tag only
+        if not tool_tags and response_schema is None:
             return json.dumps(no_func_reaonsing_tag)
 
-        # Build tag with tools
+        # Case 3: Tools present (with or without response_schema)
+        # Start with base structure and add tool tags
         import copy
+        result_tag = copy.deepcopy(no_func_reaonsing_tag)
+        result_tag["format"]["tags"].extend(tool_tags)
 
-        func_tag = copy.deepcopy(no_func_reaonsing_tag)
+        # If response_schema present, constrain final channel to schema
+        if response_schema is not None:
+            logger.info("Response schema + tools provided - creating hybrid structural tag")
+            self._apply_response_schema_to_final_channel(result_tag, response_schema)
 
-        # Add builtin tools
-        if tool_server is not None:
-            builtin_tool_list = []
-            if tool_server.has_tool("browser"):
-                builtin_tool_list.append("browser")
-            if tool_server.has_tool("python"):
-                builtin_tool_list.append("python")
-
-            if len(builtin_tool_list) > 0:
-                logger.info("Builtin_tool_list: %s", builtin_tool_list)
-                for tool in builtin_tool_list:
-                    func_tag["format"]["tags"].extend(from_builtin_tool_to_tag(tool))
-
-        # Add custom function tools
-        if has_custom_tools:
-            logger.info("Adding %d custom function tools", len(custom_tools))
-            for tool in custom_tools:
-                if hasattr(tool, "type") and tool.type == "function":
-                    func_tag["format"]["tags"].extend(from_custom_function_to_tag(tool))
-
-        return json.dumps(func_tag)
+        return json.dumps(result_tag)
