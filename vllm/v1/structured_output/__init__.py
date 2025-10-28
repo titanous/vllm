@@ -295,6 +295,18 @@ class StructuredOutputManager:
             if (request.sampling_params is not None
                 and request.sampling_params.structured_outputs is not None
                 and request.sampling_params.structured_outputs.structural_tag is not None):
+                # Check if reasoning has ended (final channel detected)
+                if request.structured_output_request.reasoning_ended is None:
+                    request.structured_output_request.reasoning_ended = (
+                        self.reasoner.is_reasoning_end(request.all_token_ids)
+                    )
+
+                # If reasoning ended, stop applying bitmask to allow EOS
+                if request.structured_output_request.reasoning_ended:
+                    logger.debug("Reasoning ended for request %s, allowing EOS",
+                               request.request_id)
+                    return False
+
                 logger.debug("Applying structural tag constraints during reasoning for request %s",
                            request.request_id)
                 return True

@@ -213,8 +213,10 @@ class GptOssReasoningParser(ReasoningParser):
 
     def __init__(self, tokenizer: PreTrainedTokenizerBase, *args, **kwargs):
         super().__init__(tokenizer, *args, **kwargs)
+        # Check for final channel start - this appears in both first-turn (after prefill)
+        # and multi-turn scenarios, making it reliable for detecting reasoning completion
         self.reasoning_end_token_ids = self.model_tokenizer.encode(
-            "<|start|>assistant<|channel|>final<|message|>"
+            "<|channel|>final<|message|>"
         )
 
     def is_reasoning_end(self, input_ids: list[int]) -> bool:
