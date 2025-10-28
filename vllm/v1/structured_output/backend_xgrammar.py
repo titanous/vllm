@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 import torch
 
 import vllm.envs
+from vllm.entrypoints.harmony_utils import get_stop_tokens_for_assistant_actions
 from vllm.logger import init_logger
 from vllm.sampling_params import SamplingParams
 from vllm.transformers_utils.tokenizers.mistral import MistralTokenizer
@@ -41,7 +42,11 @@ class XgrammarBackend(StructuredOutputBackend):
         if isinstance(self.tokenizer, MistralTokenizer):
             # NOTE: ideally, xgrammar should handle this accordingly.
             # refer to https://github.com/mlc-ai/xgrammar/blob/d77c0a0173ef14779c918e3be7966ba852f7910f/python/xgrammar/tokenizer_info.py#L98
-            stop_token_ids = [self.tokenizer.eos_token_id]
+            # Include harmony stop tokens [200002=<|return|>, 200012=<|call|>] so they are
+            # classified as stop tokens (not special tokens) in xgrammar, allowing them to be
+            # accepted when structural tag patterns reach their end markers
+            harmony_stop_tokens = get_stop_tokens_for_assistant_actions()  # [200002, 200012]
+            stop_token_ids = [self.tokenizer.eos_token_id] + harmony_stop_tokens
 
             # not self.tokenizer.vocab_size as self.tokenizer.vocab
             # collapses all decoded errors into a single token.
@@ -57,9 +62,14 @@ class XgrammarBackend(StructuredOutputBackend):
                 add_prefix_space=True,
             )
         else:
+            # For GPT-OSS: Pass a dummy stop_token_id to satisfy xgrammar's requirement,
+            # but avoid using harmony tokens (200002=<|return|>, 200012=<|call|>) which
+            # need to match structural tag patterns.
+            # Use token 0 as a dummy - it's never generated and won't interfere.
             tokenizer_info = xgr.TokenizerInfo.from_huggingface(
                 self.tokenizer,
                 vocab_size=self.vocab_size,
+                stop_token_ids=[0],  # Dummy token ID
             )
         self.compiler = xgr.GrammarCompiler(
             tokenizer_info,
