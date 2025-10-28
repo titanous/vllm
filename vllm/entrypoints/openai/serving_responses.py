@@ -397,7 +397,17 @@ class OpenAIServingResponses(OpenAIServing):
                     if sampling_params.structured_outputs is None:
                         sampling_params.structured_outputs = StructuredOutputsParams()
                     struct_out = sampling_params.structured_outputs
-                    if struct_out.all_non_structural_tag_constraints_none():
+
+                    # Check if we need to create/update structural tag for reasoning
+                    # We need structural tags when:
+                    # 1. No other constraints (tools only, or just reasoning)
+                    # 2. response_format + tools (need hybrid tag for tool constraints + final schema)
+                    has_tools = self.tool_server is not None or (request.tools and len(request.tools) > 0)
+                    has_response_schema = struct_out.json is not None
+                    needs_structural_tag = (struct_out.all_non_structural_tag_constraints_none() or
+                                          (has_tools and has_response_schema))
+
+                    if needs_structural_tag:
                         # Extract custom function tools from request
                         custom_function_tools = None
                         if request.tools:
@@ -407,18 +417,24 @@ class OpenAIServingResponses(OpenAIServing):
                                 if tool.type == "function"
                             ]
 
+                        response_schema = sampling_params.structured_outputs.json
                         sampling_params.structured_outputs.structural_tag = (
                             reasoning_parser.prepare_structured_tag(
                                 sampling_params.structured_outputs.structural_tag,
                                 self.tool_server,
                                 custom_tools=custom_function_tools,
-                                response_schema=sampling_params.structured_outputs.json,
+                                response_schema=response_schema,
                             )
                         )
                         logger.debug(
                             "Generated structural tag: %s",
                             sampling_params.structured_outputs.structural_tag[:500]
                         )
+
+                        # If response_schema was incorporated into structural_tag, clear it
+                        # to avoid "multiple constraints" validation error
+                        if response_schema is not None:
+                            sampling_params.structured_outputs.json = None
                 generator = self._generate_with_builtin_tools(
                     request_id=request.request_id,
                     request_prompt=request_prompts[i],
