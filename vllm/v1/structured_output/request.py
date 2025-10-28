@@ -20,6 +20,7 @@ class StructuredOutputRequest:
     params: StructuredOutputsParams
     _grammar: Future[StructuredOutputGrammar] | StructuredOutputGrammar | None = None
     reasoning_ended: bool | None = None
+    has_tool_constraints: bool = False  # True if grammar includes tool call schemas
 
     @staticmethod
     def from_sampling_params(

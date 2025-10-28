@@ -13,6 +13,7 @@ from vllm.v1.structured_output.backend_guidance import GuidanceBackend
 from vllm.v1.structured_output.backend_types import (
     StructuredOutputBackend,
     StructuredOutputGrammar,
+    StructuredOutputOptions,
 )
 from vllm.v1.structured_output.backend_xgrammar import XgrammarBackend
 
@@ -144,6 +145,26 @@ class StructuredOutputManager:
         # TODO: we still need to handle xgrammar compilation failures,
         # though it should be unlikely as we test that up front as well.
         request_type, grammar_spec = key
+
+        # Detect if grammar includes tool constraints (for reasoning-aware constraint application)
+        if request_type == StructuredOutputOptions.STRUCTURAL_TAG:
+            # Check if structural tag contains tool patterns (browser.*, functions.*, etc.)
+            try:
+                import json
+                tag_data = json.loads(grammar_spec)
+                if "format" in tag_data and "tags" in tag_data["format"]:
+                    for tag in tag_data["format"]["tags"]:
+                        begin = tag.get("begin", "")
+                        # Tool calls have patterns like "to=browser.", "to=functions.", "to=python"
+                        if " to=" in begin and ("<|call|>" in tag.get("end", "") or
+                                                 "json<|message|>" in begin):
+                            request.structured_output_request.has_tool_constraints = True  # type: ignore
+                            logger.debug("Detected tool constraints in structural tag for request %s",
+                                       request.request_id)
+                            break
+            except (json.JSONDecodeError, KeyError, TypeError):
+                # If parsing fails, be conservative and don't set the flag
+                pass
 
         assert self.backend is not None
         return self.backend.compile_grammar(request_type, grammar_spec)
@@ -292,9 +313,15 @@ class StructuredOutputManager:
             # channels) and must be applied during reasoning, not just after.
             # Unlike JSON schemas that might interfere with free-form reasoning,
             # structural tags guide the reasoning output format.
-            if (request.sampling_params is not None
-                and request.sampling_params.structured_outputs is not None
-                and request.sampling_params.structured_outputs.structural_tag is not None):
+            is_structural_tag = (request.sampling_params is not None
+                                and request.sampling_params.structured_outputs is not None
+                                and request.sampling_params.structured_outputs.structural_tag is not None)
+
+            # Also check if grammar has tool constraints (set by _async_create_grammar)
+            # Tool constraints must be applied during reasoning to ensure valid tool calls
+            has_tool_constraints = request.structured_output_request.has_tool_constraints
+
+            if is_structural_tag or has_tool_constraints:
                 # Check if reasoning has ended (final channel detected)
                 if request.structured_output_request.reasoning_ended is None:
                     request.structured_output_request.reasoning_ended = (
@@ -307,8 +334,8 @@ class StructuredOutputManager:
                                request.request_id)
                     return False
 
-                logger.debug("Applying structural tag constraints during reasoning for request %s",
-                           request.request_id)
+                logger.debug("Applying constraints during reasoning for request %s (structural_tag=%s, tools=%s)",
+                           request.request_id, is_structural_tag, has_tool_constraints)
                 return True
 
             if request.structured_output_request.reasoning_ended is None:
@@ -337,9 +364,13 @@ class StructuredOutputManager:
             return True
 
         # Structural tags must be advanced during reasoning to track state
-        if (request.sampling_params is not None
-            and request.sampling_params.structured_outputs is not None
-            and request.sampling_params.structured_outputs.structural_tag is not None):
+        # Also advance for grammars with tool constraints
+        is_structural_tag = (request.sampling_params is not None
+                            and request.sampling_params.structured_outputs is not None
+                            and request.sampling_params.structured_outputs.structural_tag is not None)
+        has_tool_constraints = request.structured_output_request.has_tool_constraints
+
+        if is_structural_tag or has_tool_constraints:
             return True
 
         structured_req = request.structured_output_request
