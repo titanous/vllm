@@ -71,11 +71,11 @@ class TestGptOssReasoningParser:
 
         # Check all three channels are present
         tag_begins = [tag["begin"] for tag in parsed["format"]["tags"]]
-        assert "<|start|>assistant<|channel|>analysis<|message|>" in tag_begins
-        assert "<|start|>assistant<|channel|>commentary<|message|>" in tag_begins
-        assert "<|start|>assistant<|channel|>final<|message|>" in tag_begins
+        assert "<|channel|>analysis<|message|>" in tag_begins
+        assert "<|channel|>commentary<|message|>" in tag_begins
+        assert "<|channel|>final<|message|>" in tag_begins
 
-        assert parsed["format"]["triggers"] == ["<|start|>assistant"]
+        assert parsed["format"]["triggers"] == ["<|channel|>", " to="]
 
     def test_prepare_structured_tag_with_all_tools(
         self, reasoning_parser, mock_tool_server_with_all_tools
@@ -119,11 +119,11 @@ class TestGptOssReasoningParser:
         assert len(python_tags) == 4
         tag_begins = [tag["begin"] for tag in python_tags]
         # Check both formats for commentary channel
-        assert "<|start|>assistant to=python<|channel|>commentary json<|message|>" in tag_begins
-        assert "<|start|>assistant<|channel|>commentary to=python json<|message|>" in tag_begins
+        assert " to=python<|channel|>commentary json<|message|>" in tag_begins
+        assert "<|channel|>commentary to=python json<|message|>" in tag_begins
         # Check both formats for analysis channel
-        assert "<|start|>assistant to=python<|channel|>analysis json<|message|>" in tag_begins
-        assert "<|start|>assistant<|channel|>analysis to=python json<|message|>" in tag_begins
+        assert " to=python<|channel|>analysis json<|message|>" in tag_begins
+        assert "<|channel|>analysis to=python json<|message|>" in tag_begins
         # All should have any_text content
         for tag in python_tags:
             assert tag["content"]["type"] == "any_text"
@@ -162,12 +162,12 @@ class TestGptOssReasoningParser:
 
         # Verify all tags have correct structure
         for tag in no_func_reaonsing_tag["format"]["tags"]:
-            assert tag["begin"].startswith("<|start|>assistant<|channel|>")
+            assert tag["begin"].startswith("<|channel|>")
             assert tag["content"]["type"] == "any_text"
             assert tag["end"] == "<|end|>"
 
         # Verify trigger is correct
-        assert no_func_reaonsing_tag["format"]["triggers"] == ["<|start|>assistant"]
+        assert no_func_reaonsing_tag["format"]["triggers"] == ["<|channel|>", " to="]
 
     def test_json_serialization_valid(
         self, reasoning_parser, mock_tool_server_with_all_tools
@@ -240,9 +240,9 @@ class TestGptOssReasoningParser:
 
         tag_begins = [tag["begin"] for tag in tags]
         # Check format 1: to= before <|channel|>
-        assert "<|start|>assistant to=functions.get_weather<|channel|>commentary json<|message|>" in tag_begins
+        assert " to=functions.get_weather<|channel|>commentary json<|message|>" in tag_begins
         # Check format 2: <|channel|> before to=
-        assert "<|start|>assistant<|channel|>commentary to=functions.get_weather json<|message|>" in tag_begins
+        assert "<|channel|>commentary to=functions.get_weather json<|message|>" in tag_begins
 
         # All tags should have json_schema content and correct schema
         for tag in tags:
@@ -275,7 +275,7 @@ class TestGptOssReasoningParser:
         assert len(parsed["format"]["tags"]) == 7
 
         # Check trigger
-        assert parsed["format"]["triggers"] == ["<|start|>assistant"]
+        assert parsed["format"]["triggers"] == ["<|channel|>", " to="]
 
         # Check that function tags are present with json content_type (both formats)
         tag_begins = [tag["begin"] for tag in parsed["format"]["tags"]]
@@ -304,7 +304,7 @@ class TestGptOssReasoningParser:
         assert len(parsed["format"]["tags"]) == 9
 
         # Check trigger
-        assert parsed["format"]["triggers"] == ["<|start|>assistant"]
+        assert parsed["format"]["triggers"] == ["<|channel|>", " to="]
 
         # Check tags with json content_type (both formats)
         tag_begins = [tag["begin"] for tag in parsed["format"]["tags"]]
@@ -332,7 +332,7 @@ class TestGptOssReasoningParser:
 
         # Should have ONLY final channel tag with JSON schema
         assert len(parsed["format"]["tags"]) == 1
-        assert parsed["format"]["tags"][0]["begin"] == "<|start|>assistant<|channel|>final json<|message|>"
+        assert parsed["format"]["tags"][0]["begin"] == "<|channel|>final json<|message|>"
         assert parsed["format"]["tags"][0]["content"]["type"] == "json_schema"
         assert parsed["format"]["tags"][0]["content"]["json_schema"] == response_schema
         assert parsed["format"]["stop_after_first"] is True
@@ -362,7 +362,8 @@ class TestGptOssReasoningParser:
         for tag in browser_tags:
             # All tool calls must have ' json<|message|>' in begin
             assert " json<|message|>" in tag["begin"]
-            assert tag["begin"].startswith("<|start|>assistant")
+            # Should start with either " to=" or "<|channel|>"
+            assert tag["begin"].startswith(" to=") or tag["begin"].startswith("<|channel|>")
             assert "<|channel|>" in tag["begin"]
             # Should have either format 1 (to= before <|channel|>) or format 2 (<|channel|> before to=)
             assert ("to=" in tag["begin"]) and (("<|channel|>" in tag["begin"]))

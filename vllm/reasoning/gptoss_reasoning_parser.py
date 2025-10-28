@@ -20,24 +20,24 @@ no_func_reaonsing_tag = {
         "tags": [
             # Analysis channel: reasoning/thinking
             {
-                "begin": "<|start|>assistant<|channel|>analysis<|message|>",
+                "begin": "<|channel|>analysis<|message|>",
                 "content": {"type": "any_text"},
                 "end": "<|end|>",
             },
             # Commentary channel: internal thoughts
             {
-                "begin": "<|start|>assistant<|channel|>commentary<|message|>",
+                "begin": "<|channel|>commentary<|message|>",
                 "content": {"type": "any_text"},
                 "end": "<|end|>",
             },
             # Final channel: output to user
             {
-                "begin": "<|start|>assistant<|channel|>final<|message|>",
+                "begin": "<|channel|>final<|message|>",
                 "content": {"type": "any_text"},
                 "end": "<|end|>",
             },
         ],
-        "triggers": ["<|start|>assistant"],
+        "triggers": ["<|channel|>", " to="],
         "stop_after_first": False,
     },
 }
@@ -67,7 +67,7 @@ def create_response_schema_tag(response_schema: dict | str) -> dict:
             "type": "triggered_tags",
             "tags": [
                 {
-                    "begin": "<|start|>assistant<|channel|>final json<|message|>",
+                    "begin": "<|channel|>final json<|message|>",
                     "content": {
                         "type": "json_schema",
                         "json_schema": schema_dict
@@ -75,7 +75,7 @@ def create_response_schema_tag(response_schema: dict | str) -> dict:
                     "end": "<|end|>",
                 },
             ],
-            "triggers": ["<|start|>assistant"],
+            "triggers": ["<|channel|>", " to="],
             "stop_after_first": True,
         },
     }
@@ -112,7 +112,7 @@ def from_builtin_tool_to_tag(tool: str) -> list[dict]:
             for channel in channels:
                 # Format 1: to= before <|channel|>
                 tags.append({
-                    "begin": f"<|start|>assistant to={tool}.{func.name}<|channel|>{channel} json<|message|>",
+                    "begin": f" to={tool}.{func.name}<|channel|>{channel} json<|message|>",
                     "content": {
                         "type": "json_schema",
                         "json_schema": func.parameters
@@ -121,7 +121,7 @@ def from_builtin_tool_to_tag(tool: str) -> list[dict]:
                 })
                 # Format 2: <|channel|> before to=
                 tags.append({
-                    "begin": f"<|start|>assistant<|channel|>{channel} to={tool}.{func.name} json<|message|>",
+                    "begin": f"<|channel|>{channel} to={tool}.{func.name} json<|message|>",
                     "content": {
                         "type": "json_schema",
                         "json_schema": func.parameters
@@ -133,13 +133,13 @@ def from_builtin_tool_to_tag(tool: str) -> list[dict]:
         for channel in channels:
             # Format 1: to= before <|channel|>
             tags.append({
-                "begin": f"<|start|>assistant to={tool}<|channel|>{channel} json<|message|>",
+                "begin": f" to={tool}<|channel|>{channel} json<|message|>",
                 "content": {"type": "any_text"},
                 "end": "<|call|>"
             })
             # Format 2: <|channel|> before to=
             tags.append({
-                "begin": f"<|start|>assistant<|channel|>{channel} to={tool} json<|message|>",
+                "begin": f"<|channel|>{channel} to={tool} json<|message|>",
                 "content": {"type": "any_text"},
                 "end": "<|call|>"
             })
@@ -181,7 +181,7 @@ def from_custom_function_to_tag(tool) -> list[dict]:
 
     # Format 1: to= before <|channel|>
     tags.append({
-        "begin": f"<|start|>assistant to=functions.{name}<|channel|>{channel} json<|message|>",
+        "begin": f" to=functions.{name}<|channel|>{channel} json<|message|>",
         "content": {
             "type": "json_schema",
             "json_schema": parameters
@@ -191,7 +191,7 @@ def from_custom_function_to_tag(tool) -> list[dict]:
 
     # Format 2: <|channel|> before to=
     tags.append({
-        "begin": f"<|start|>assistant<|channel|>{channel} to=functions.{name} json<|message|>",
+        "begin": f"<|channel|>{channel} to=functions.{name} json<|message|>",
         "content": {
             "type": "json_schema",
             "json_schema": parameters
