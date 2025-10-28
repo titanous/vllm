@@ -34,7 +34,7 @@ no_func_reaonsing_tag = {
             {
                 "begin": "<|channel|>final<|message|>",
                 "content": {"type": "any_text"},
-                "end": "<|end|>",
+                "end": "<|return|>",
             },
         ],
         "triggers": ["<|channel|>", " to="],
@@ -72,7 +72,7 @@ def create_response_schema_tag(response_schema: dict | str) -> dict:
                         "type": "json_schema",
                         "json_schema": schema_dict
                     },
-                    "end": "<|end|>",
+                    "end": "<|return|>",
                 },
             ],
             "triggers": ["<|channel|>", " to="],
@@ -336,7 +336,7 @@ class GptOssReasoningParser(ReasoningParser):
                         "type": "json_schema",
                         "json_schema": schema_dict
                     },
-                    "end": "<|end|>",
+                    "end": "<|return|>",
                 }
                 break
 

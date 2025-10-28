@@ -164,7 +164,11 @@ class TestGptOssReasoningParser:
         for tag in no_func_reaonsing_tag["format"]["tags"]:
             assert tag["begin"].startswith("<|channel|>")
             assert tag["content"]["type"] == "any_text"
-            assert tag["end"] == "<|end|>"
+            # Final channel uses <|return|>, other channels use <|end|>
+            if "final" in tag["begin"]:
+                assert tag["end"] == "<|return|>"
+            else:
+                assert tag["end"] == "<|end|>"
 
         # Verify trigger is correct
         assert no_func_reaonsing_tag["format"]["triggers"] == ["<|channel|>", " to="]
@@ -335,6 +339,7 @@ class TestGptOssReasoningParser:
         assert parsed["format"]["tags"][0]["begin"] == "<|channel|>final json<|message|>"
         assert parsed["format"]["tags"][0]["content"]["type"] == "json_schema"
         assert parsed["format"]["tags"][0]["content"]["json_schema"] == response_schema
+        assert parsed["format"]["tags"][0]["end"] == "<|return|>"
         assert parsed["format"]["stop_after_first"] is True
 
         # No tool call tags should be present
@@ -352,6 +357,7 @@ class TestGptOssReasoningParser:
 
         assert len(parsed["format"]["tags"]) == 1
         assert parsed["format"]["tags"][0]["content"]["type"] == "json_schema"
+        assert parsed["format"]["tags"][0]["end"] == "<|return|>"
         # Verify the schema was parsed correctly
         assert parsed["format"]["tags"][0]["content"]["json_schema"]["properties"]["result"]["type"] == "number"
 

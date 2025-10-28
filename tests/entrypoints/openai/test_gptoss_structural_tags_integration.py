@@ -66,7 +66,11 @@ class TestGptOssStructuralTagsIntegration:
         # Verify all tags have correct structure
         for tag in parsed_result["format"]["tags"]:
             assert tag["content"]["type"] == "any_text"
-            assert tag["end"] == "<|end|>"
+            # Final channel uses <|return|>, other channels use <|end|>
+            if "final" in tag["begin"]:
+                assert tag["end"] == "<|return|>"
+            else:
+                assert tag["end"] == "<|end|>"
 
         # Verify trigger
         assert parsed_result["format"]["triggers"] == ["<|start|>assistant"]
@@ -268,12 +272,15 @@ class TestGptOssStructuralTagsIntegration:
             # Content type can be "any_text" or "json_schema"
             assert tag["content"]["type"] in ["any_text", "json_schema"]
 
-            # End marker depends on whether it's a tool call or not
+            # End marker depends on the channel type
             if "to=" in tag["begin"]:
                 # Tool calls end with <|call|>
                 assert tag["end"] == "<|call|>"
+            elif "final" in tag["begin"]:
+                # Final channel ends with <|return|>
+                assert tag["end"] == "<|return|>"
             else:
-                # Analysis channel ends with <|end|>
+                # Analysis/commentary channels end with <|end|>
                 assert tag["end"] == "<|end|>"
 
             # Verify begin format
