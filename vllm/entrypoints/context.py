@@ -541,10 +541,14 @@ class StreamingHarmonyContext(HarmonyContext):
             # Check if the current token is part of reasoning content
             self._update_num_reasoning_tokens()
             self.last_tok = tok
-            if len(self._messages) - self.num_init_messages < len(self.parser.messages):
-                self._messages.extend(
-                    self.parser.messages[len(self._messages) - self.num_init_messages :]
-                )
+            num_existing = len(self._messages) - self.num_init_messages
+            num_parser = len(self.parser.messages)
+            if num_existing < num_parser:
+                new_messages = self.parser.messages[num_existing:]
+                logger.debug("Adding %d new messages from parser. Existing: %d, Parser total: %d. New messages: %s",
+                            len(new_messages), num_existing, num_parser,
+                            [(m.recipient, m.content[0].text[:50] if m.content else "") for m in new_messages])
+                self._messages.extend(new_messages)
         else:
             # Handle the case of tool output in direct message format
             assert len(output) == 1, "Tool output should be a single message"
@@ -553,9 +557,15 @@ class StreamingHarmonyContext(HarmonyContext):
             # so we set it to "assistant"
             if msg.author.role == Role.TOOL and msg.recipient is None:
                 msg.recipient = "assistant"
+            logger.debug("Processing tool output: author=%s, recipient=%s, content_len=%d",
+                        msg.author.name, msg.recipient, len(msg.content[0].text) if msg.content else 0)
+            logger.debug("Messages before processing tool output: total=%d, parser.messages=%d",
+                        len(self._messages), len(self.parser.messages))
             toks = self.encoding.render(msg)
             for tok in toks:
                 self.parser.process(tok)
+            logger.debug("Messages after processing tool output: total=%d, parser.messages=%d",
+                        len(self._messages), len(self.parser.messages))
             self.last_tok = toks[-1]
             # Track this tool output for streaming and final response
             self._pending_tool_output = msg
@@ -586,6 +596,11 @@ class StreamingHarmonyContext(HarmonyContext):
         # now this list of tokens as next turn's starting tokens
         # `<|start|>assistant`,
         # we need to process them in parser.
+        logger.debug("render_for_completion: total_messages=%d, init_messages=%d",
+                    len(self._messages), self.num_init_messages)
+        logger.debug("Last 5 messages: %s",
+                    [(m.author.role, m.recipient, m.content[0].text[:30] if m.content else "")
+                     for m in self._messages[-(min(5, len(self._messages))):]])
         rendered_tokens = super().render_for_completion()
 
         last_n = -1
