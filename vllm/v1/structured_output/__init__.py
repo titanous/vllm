@@ -159,8 +159,6 @@ class StructuredOutputManager:
                         if " to=" in begin and ("<|call|>" in tag.get("end", "") or
                                                  "json<|message|>" in begin):
                             request.structured_output_request.has_tool_constraints = True  # type: ignore
-                            logger.debug("Detected tool constraints in structural tag for request %s",
-                                       request.request_id)
                             break
             except (json.JSONDecodeError, KeyError, TypeError):
                 # If parsing fails, be conservative and don't set the flag
@@ -330,12 +328,8 @@ class StructuredOutputManager:
 
                 # If reasoning ended, stop applying bitmask to allow EOS
                 if request.structured_output_request.reasoning_ended:
-                    logger.debug("Reasoning ended for request %s, allowing EOS",
-                               request.request_id)
                     return False
 
-                logger.debug("Applying constraints during reasoning for request %s (structural_tag=%s, tools=%s)",
-                           request.request_id, is_structural_tag, has_tool_constraints)
                 return True
 
             if request.structured_output_request.reasoning_ended is None:

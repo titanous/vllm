@@ -298,13 +298,11 @@ class GptOssReasoningParser(ReasoningParser):
                 builtin_tool_list.append("python")
 
             if len(builtin_tool_list) > 0:
-                logger.info("Builtin_tool_list: %s", builtin_tool_list)
                 for tool in builtin_tool_list:
                     tool_tags.extend(from_builtin_tool_to_tag(tool))
 
         # Add custom function tools
         if custom_tools is not None and len(custom_tools) > 0:
-            logger.info("Adding %d custom function tools", len(custom_tools))
             for tool in custom_tools:
                 if hasattr(tool, "type") and tool.type == "function":
                     tool_tags.extend(from_custom_function_to_tag(tool))
@@ -367,7 +365,6 @@ class GptOssReasoningParser(ReasoningParser):
 
         # Case 1: response_schema only (no tools) - restrict to final output only
         if response_schema is not None and not tool_tags:
-            logger.info("Response schema provided - restricting to final output only")
             return json.dumps(create_response_schema_tag(response_schema))
 
         # Case 2: No tools and no response_schema - base tag only
@@ -382,7 +379,6 @@ class GptOssReasoningParser(ReasoningParser):
 
         # If response_schema present, constrain final channel to schema
         if response_schema is not None:
-            logger.info("Response schema + tools provided - creating hybrid structural tag")
             self._apply_response_schema_to_final_channel(result_tag, response_schema)
 
         return json.dumps(result_tag)

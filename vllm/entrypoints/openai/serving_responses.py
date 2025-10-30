@@ -426,10 +426,6 @@ class OpenAIServingResponses(OpenAIServing):
                                 response_schema=response_schema,
                             )
                         )
-                        logger.debug(
-                            "Generated structural tag: %s",
-                            sampling_params.structured_outputs.structural_tag[:500]
-                        )
 
                         # If response_schema was incorporated into structural_tag, clear it
                         # to avoid "multiple constraints" validation error
