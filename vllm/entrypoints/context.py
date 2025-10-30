@@ -350,6 +350,9 @@ class HarmonyContext(ConversationContext):
         last_msg = self.messages[-1]
         recipient = last_msg.recipient
         if recipient is not None:
+            logger.debug("Builtin tool call: recipient=%s, content=%s",
+                        recipient, last_msg.content[0].text)
+
             if recipient.startswith("browser."):
                 return await self.call_search_tool(
                     self._tool_sessions["browser"], last_msg
