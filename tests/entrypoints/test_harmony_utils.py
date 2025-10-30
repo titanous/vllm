@@ -5,12 +5,12 @@ from openai_harmony import Role
 
 from vllm.entrypoints.harmony_utils import (
     has_custom_tools,
-    parse_input_to_harmony_message,
+    parse_chat_input,
 )
 
 
 class TestParseInputToHarmonyMessage:
-    """Tests for parse_input_to_harmony_message function."""
+    """Tests for parse_chat_input function."""
 
     def test_assistant_message_with_tool_calls(self):
         """Test parsing assistant message with tool calls."""
@@ -32,7 +32,7 @@ class TestParseInputToHarmonyMessage:
             ],
         }
 
-        messages = parse_input_to_harmony_message(chat_msg)
+        messages = parse_chat_input(chat_msg)
 
         assert len(messages) == 2
 
@@ -64,7 +64,7 @@ class TestParseInputToHarmonyMessage:
             ],
         }
 
-        messages = parse_input_to_harmony_message(chat_msg)
+        messages = parse_chat_input(chat_msg)
 
         assert len(messages) == 1
         assert messages[0].content[0].text == ""
@@ -78,7 +78,7 @@ class TestParseInputToHarmonyMessage:
             "content": "The weather in San Francisco is sunny, 72°F",
         }
 
-        messages = parse_input_to_harmony_message(chat_msg)
+        messages = parse_chat_input(chat_msg)
 
         assert len(messages) == 1
         assert messages[0].author.role == Role.TOOL
@@ -104,7 +104,7 @@ class TestParseInputToHarmonyMessage:
             ],
         }
 
-        messages = parse_input_to_harmony_message(chat_msg)
+        messages = parse_chat_input(chat_msg)
 
         assert len(messages) == 1
         assert messages[0].author.role == Role.TOOL
@@ -118,7 +118,7 @@ class TestParseInputToHarmonyMessage:
             "content": None,
         }
 
-        messages = parse_input_to_harmony_message(chat_msg)
+        messages = parse_chat_input(chat_msg)
 
         assert len(messages) == 1
         assert messages[0].content[0].text == ""
@@ -130,7 +130,7 @@ class TestParseInputToHarmonyMessage:
             "content": "You are a helpful assistant",
         }
 
-        messages = parse_input_to_harmony_message(chat_msg)
+        messages = parse_chat_input(chat_msg)
 
         assert len(messages) == 1
         # System messages are converted using Message.from_dict
@@ -144,7 +144,7 @@ class TestParseInputToHarmonyMessage:
             "content": "Use concise language",
         }
 
-        messages = parse_input_to_harmony_message(chat_msg)
+        messages = parse_chat_input(chat_msg)
 
         assert len(messages) == 1
         assert messages[0].author.role == Role.DEVELOPER
@@ -156,7 +156,7 @@ class TestParseInputToHarmonyMessage:
             "content": "What's the weather in San Francisco?",
         }
 
-        messages = parse_input_to_harmony_message(chat_msg)
+        messages = parse_chat_input(chat_msg)
 
         assert len(messages) == 1
         assert messages[0].author.role == Role.USER
@@ -172,7 +172,7 @@ class TestParseInputToHarmonyMessage:
             ],
         }
 
-        messages = parse_input_to_harmony_message(chat_msg)
+        messages = parse_chat_input(chat_msg)
 
         assert len(messages) == 1
         assert messages[0].author.role == Role.USER
@@ -187,7 +187,7 @@ class TestParseInputToHarmonyMessage:
             "content": "Hello! How can I help you today?",
         }
 
-        messages = parse_input_to_harmony_message(chat_msg)
+        messages = parse_chat_input(chat_msg)
 
         assert len(messages) == 1
         assert messages[0].author.role == Role.ASSISTANT
@@ -204,7 +204,7 @@ class TestParseInputToHarmonyMessage:
                 }
 
         chat_msg = MockPydanticModel()
-        messages = parse_input_to_harmony_message(chat_msg)
+        messages = parse_chat_input(chat_msg)
 
         assert len(messages) == 1
         assert messages[0].author.role == Role.USER
@@ -217,7 +217,7 @@ class TestParseInputToHarmonyMessage:
             "content": "",
         }
 
-        messages = parse_input_to_harmony_message(chat_msg)
+        messages = parse_chat_input(chat_msg)
 
         assert len(messages) == 1
         assert messages[0].content[0].text == ""
@@ -233,7 +233,7 @@ class TestParseInputToHarmonyMessage:
             ],
         }
 
-        messages = parse_input_to_harmony_message(chat_msg)
+        messages = parse_chat_input(chat_msg)
 
         assert len(messages) == 1
         assert messages[0].recipient == "functions."
@@ -249,7 +249,7 @@ class TestParseInputToHarmonyMessage:
             ],
         }
 
-        messages = parse_input_to_harmony_message(chat_msg)
+        messages = parse_chat_input(chat_msg)
 
         assert len(messages) == 1
         assert len(messages[0].content) == 2
