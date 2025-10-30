@@ -575,7 +575,8 @@ class StreamingHarmonyContext(HarmonyContext):
             # Track this tool output for streaming and final response
             self._pending_tool_output = msg
             self._last_tool_output_text = msg.content[0].text
-            # TODO: add tool_output messages to self._messages
+            # Add tool output to _messages to keep it in sync with parser
+            self._messages.append(msg)
 
     def is_expecting_start(self) -> bool:
         return self.parser.state == StreamState.EXPECT_START
