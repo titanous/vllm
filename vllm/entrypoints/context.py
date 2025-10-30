@@ -545,9 +545,14 @@ class StreamingHarmonyContext(HarmonyContext):
             num_parser = len(self.parser.messages)
             if num_existing < num_parser:
                 new_messages = self.parser.messages[num_existing:]
+                def get_content_preview(m):
+                    if not m.content:
+                        return ""
+                    c = m.content[0]
+                    return c.text[:50] if hasattr(c, 'text') else f"<{type(c).__name__}>"
                 logger.debug("Adding %d new messages from parser. Existing: %d, Parser total: %d. New messages: %s",
                             len(new_messages), num_existing, num_parser,
-                            [(m.recipient, m.content[0].text[:50] if m.content else "") for m in new_messages])
+                            [(m.recipient, get_content_preview(m)) for m in new_messages])
                 self._messages.extend(new_messages)
         else:
             # Handle the case of tool output in direct message format
@@ -598,8 +603,15 @@ class StreamingHarmonyContext(HarmonyContext):
         # we need to process them in parser.
         logger.debug("render_for_completion: total_messages=%d, init_messages=%d",
                     len(self._messages), self.num_init_messages)
+        def get_msg_preview(m):
+            if not m.content:
+                return ""
+            content = m.content[0]
+            if hasattr(content, 'text'):
+                return content.text[:30]
+            return f"<{type(content).__name__}>"
         logger.debug("Last 5 messages: %s",
-                    [(m.author.role, m.recipient, m.content[0].text[:30] if m.content else "")
+                    [(m.author.role, m.recipient, get_msg_preview(m))
                      for m in self._messages[-(min(5, len(self._messages))):]])
         rendered_tokens = super().render_for_completion()
 
