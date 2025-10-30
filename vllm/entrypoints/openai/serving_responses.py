@@ -969,7 +969,7 @@ class OpenAIServingResponses(OpenAIServing):
                 request, with_custom_tools, tool_types
             )
             messages.append(sys_msg)
-            if with_custom_tools:
+            if with_custom_tools or request.instructions:
                 dev_msg = get_developer_message(
                     instructions=request.instructions, tools=request.tools
                 )
