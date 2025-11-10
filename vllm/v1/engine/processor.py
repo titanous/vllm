@@ -293,15 +293,21 @@ class Processor:
             # will satisfy the most use cases without having to worry about
             # this setting. We include fallback behavior here, but not with any
             # other setting where a specific backend was specified.
-            try:
+
+            # Structural tags are xgrammar-only, don't allow fallback to guidance
+            if params.structured_outputs.structural_tag is not None:
                 validate_xgrammar_grammar(params)
                 params.structured_outputs._backend = "xgrammar"
-            except ValueError:
-                # The request either failed validation
-                # or includes some jsonschema feature(s) that
-                # are not supported in xgrammar. Fall back to guidance.
-                validate_guidance_grammar(params, tokenizer=None)
-                params.structured_outputs._backend = "guidance"
+            else:
+                try:
+                    validate_xgrammar_grammar(params)
+                    params.structured_outputs._backend = "xgrammar"
+                except ValueError:
+                    # The request either failed validation
+                    # or includes some jsonschema feature(s) that
+                    # are not supported in xgrammar. Fall back to guidance.
+                    validate_guidance_grammar(params, tokenizer=None)
+                    params.structured_outputs._backend = "guidance"
             # Remember that this backend was set automatically
             params.structured_outputs._backend_was_auto = True
 
