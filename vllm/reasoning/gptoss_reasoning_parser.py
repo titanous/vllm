@@ -75,7 +75,7 @@ def create_response_schema_tag(response_schema: dict | str) -> dict:
                     "end": "<|return|>",
                 },
             ],
-            "triggers": ["<|channel|>", " to="],
+            "triggers": ["<|channel|>"],  # Only include triggers that match tags present
             "stop_after_first": True,
         },
     }
