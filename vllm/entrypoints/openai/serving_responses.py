@@ -401,11 +401,11 @@ class OpenAIServingResponses(OpenAIServing):
                     # Check if we need to create/update structural tag for reasoning
                     # We need structural tags when:
                     # 1. No other constraints (tools only, or just reasoning)
-                    # 2. response_format + tools (need hybrid tag for tool constraints + final schema)
+                    # 2. response_format (with or without tools) - need structural tag for Harmony format
                     has_tools = self.tool_server is not None or (request.tools and len(request.tools) > 0)
                     has_response_schema = struct_out.json is not None
                     needs_structural_tag = (struct_out.all_non_structural_tag_constraints_none() or
-                                          (has_tools and has_response_schema))
+                                          has_response_schema)
 
                     if needs_structural_tag:
                         # Extract custom function tools from request
